@@ -15,12 +15,13 @@
   with them.
 - Add a stage chapter and link it from `docs/SUMMARY.md` when a distinct
   milestone is completed.
-- Keep desktop behavior independent from optional mobile UI and describe
-  hardware such as the FP5 as a reference target unless code is intentionally
-  device-specific.
+- Keep platform support capability-driven. Discover outputs, input devices,
+  scale, transform, and protocol support at runtime instead of branching on
+  hardware or compositor names.
+- Keep optional shell compositions independent: enabling one composition must
+  not construct modules belonging only to another composition.
 - Keep Patin usable without 0xin. Compositor-specific integration belongs
   behind a replaceable adapter.
 - Run `git diff --check` before handing work back.
 - Do not create commits unless the user explicitly asks. After each milestone,
   list the files to stage and give one short example commit-message line.
-

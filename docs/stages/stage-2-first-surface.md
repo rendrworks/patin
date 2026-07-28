@@ -83,9 +83,9 @@ patin: rendered 1280x32 top bar with a 32px exclusive zone
 The purple bar was visible in the nested 0xin output. Stopping 0xin shut the
 compositor down cleanly after the client test.
 
-## FP5 reference-hardware verification
+## Aarch64 phone verification
 
-Patin was then copied to a temporary build directory on the aarch64 Fairphone 5
+Patin was then copied to a temporary build directory on an aarch64 phone
 running postmarketOS edge and built natively:
 
 ```text
@@ -107,8 +107,8 @@ patin: connected; waiting for the compositor to configure the bar
 patin: rendered 509x32 top bar with a 32px exclusive zone
 ```
 
-The `509` logical-pixel width is consistent with the FP5's 1224-pixel portrait
-output at scale 2.4. This solid-color stage verifies connection, layer role,
+The `509` logical-pixel width is consistent with the test output's 1224-pixel
+portrait mode at scale 2.4. This solid-color stage verifies connection, layer role,
 logical geometry, and process isolation. It does not yet verify scale-aware
 buffer allocation or text sharpness. Patin was stopped with Ctrl-C after the
 test, and an independent SSH check confirmed that 0xin remained running.

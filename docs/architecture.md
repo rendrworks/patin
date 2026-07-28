@@ -13,8 +13,8 @@ directions rather than empty modules in the foundation:
   quick settings, and notification views.
 - **Services** expose typed state from standard system interfaces such as
   D-Bus, without coupling UI components to transport details.
-- **Mobile** composes shared components into opt-in phone navigation and
-  surfaces. Desktop startup must not construct phone-specific UI.
+- **Compositions** select and arrange shared components for a use case. A
+  composition instantiates only the modules it enables.
 - **Compositor integration** exposes workspace state and commands through a
   replaceable adapter. Its neutral implementation works without compositor
   IPC; a later 0xin adapter will use the documented control socket.
@@ -37,6 +37,12 @@ pixel generation can be tested without a compositor.
 Rendering is kept behind a small internal interface so a GPU backend can be
 added if measurements justify it. This is not a promise of a public renderer
 API, and v1 will not build abstractions for hypothetical backends.
+
+Core behavior must not branch on hardware models, connector names, fixed
+resolutions, compositor brands, or assumed scales. Outputs, transforms, input
+capabilities, and protocol support come from Wayland at runtime. Different
+shell compositions are selected explicitly and built from the same platform,
+rendering, UI, component, and service modules.
 
 Patin reuses focused libraries for standards-heavy work. It does not reimplement
 Wayland protocol machinery, font shaping, D-Bus, or complex system-service
