@@ -38,6 +38,8 @@ deliberately deferred to the stages that can demonstrate them properly.
 - `run` owns startup: connection, registry enumeration, global binding, layer
   configuration, state construction, and the Calloop dispatch loop.
 - `Patin::configure` accepts the compositor's first size and initiates drawing.
+  It remembers that size and ignores identical configure events, preventing a
+  configure/commit feedback loop while still redrawing after a real resize.
 - `Patin::draw` creates and attaches the shared-memory buffer.
 - `fill_solid_argb` writes one little-endian ARGB value into every pixel and is
   independent of Wayland.
@@ -80,3 +82,33 @@ patin: rendered 1280x32 top bar with a 32px exclusive zone
 
 The purple bar was visible in the nested 0xin output. Stopping 0xin shut the
 compositor down cleanly after the client test.
+
+## FP5 reference-hardware verification
+
+Patin was then copied to a temporary build directory on the aarch64 Fairphone 5
+running postmarketOS edge and built natively:
+
+```text
+rustc 1.97.0 (Alpine Linux)
+cargo build --release --locked
+Finished `release` profile [optimized] target(s) in 54.59s
+```
+
+With standalone 0xin already running, Patin connected over
+`/run/user/10000/wayland-0` while a second SSH connection kept recovery
+available. The first run exposed repeated identical configure events from the
+compositor. Remembering the last configured size fixed the resulting
+configure/commit feedback loop.
+
+The corrected build stayed alive alongside 0xin and rendered exactly once:
+
+```text
+patin: connected; waiting for the compositor to configure the bar
+patin: rendered 509x32 top bar with a 32px exclusive zone
+```
+
+The `509` logical-pixel width is consistent with the FP5's 1224-pixel portrait
+output at scale 2.4. This solid-color stage verifies connection, layer role,
+logical geometry, and process isolation. It does not yet verify scale-aware
+buffer allocation or text sharpness. Patin was stopped with Ctrl-C after the
+test, and an independent SSH check confirmed that 0xin remained running.

@@ -1,12 +1,16 @@
 # Environment and Toolchain
 
 Patin is ordinary Linux userspace software. Development begins on Arch Linux
-and x86_64, with later on-device verification on the aarch64 Fairphone 5.
+and x86_64, with on-device verification on the aarch64 Fairphone 5 running
+postmarketOS edge.
 
 ## Rust
 
-The repository pins Rust 1.97.1 with the minimal rustup profile plus `rustfmt`
-and Clippy. A fresh checkout selects it through `rust-toolchain.toml`.
+The repository pins the development toolchain to Rust 1.97.1 with the minimal
+rustup profile plus `rustfmt` and Clippy. `Cargo.toml` declares 1.97 as the
+minimum supported Rust release, which includes the FP5's Alpine Rust 1.97.0.
+A rustup-based checkout selects the exact development pin through
+`rust-toolchain.toml`.
 
 ```sh
 rustc --version
@@ -31,6 +35,29 @@ cargo run
 
 Patin reports a clear error and exits unsuccessfully when no compositor can be
 found or a required global is unavailable.
+
+## FP5 reference device
+
+The FP5 runs 0xin directly through greetd, with its Wayland socket at
+`/run/user/10000/wayland-0` during the recorded test. An SSH login does not
+inherit the graphical session environment, so set it explicitly:
+
+```sh
+cd ~/Projects/patin
+cargo build --release --locked
+
+env -u LD_LIBRARY_PATH \
+  XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+  WAYLAND_DISPLAY=wayland-0 \
+  target/release/patin
+```
+
+Unsetting `LD_LIBRARY_PATH` prevents a shell client from loading 0xin's private
+wlroots/sysroot libraries. Keep recovery available from another machine:
+
+```sh
+ssh fp5 'pkill -TERM -x 0xin'
+```
 
 ## Documentation
 

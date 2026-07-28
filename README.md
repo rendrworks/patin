@@ -49,6 +49,24 @@ compositor must support `wlr-layer-shell-unstable-v1`. Patin creates one
 32-pixel-high purple bar on the default output, anchors it to the top edge,
 reserves a 32-pixel exclusive zone, and runs until interrupted.
 
+### FP5 reference test
+
+Patin has also been built natively with Alpine Rust 1.97.0 on the aarch64
+Fairphone 5 and run as a client of its standalone 0xin session. From SSH, point
+it at 0xin's active socket and avoid any compositor-private library path:
+
+```sh
+env -u LD_LIBRARY_PATH \
+  XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+  WAYLAND_DISPLAY=wayland-0 \
+  target/release/patin
+```
+
+Keep a second SSH connection available with
+`ssh fp5 'pkill -TERM -x 0xin'` during phone testing. The current solid fill
+validates layer-shell and logical sizing; sharp fractional-scale text and
+scale-aware buffers belong to the rendering milestone.
+
 ## Documentation
 
 The project book lives under [`docs/`](docs/introduction.md). Preview it with:

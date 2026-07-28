@@ -73,6 +73,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         shm,
         pool,
         layer,
+        size: None,
         exit: false,
     };
 
@@ -91,6 +92,7 @@ struct Patin {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
+    size: Option<(u32, u32)>,
     exit: bool,
 }
 
@@ -140,6 +142,12 @@ impl LayerShellHandler for Patin {
     ) {
         let width = configure.new_size.0.max(1);
         let height = configure.new_size.1.max(BAR_HEIGHT);
+
+        if self.size == Some((width, height)) {
+            return;
+        }
+
+        self.size = Some((width, height));
         self.draw(width, height);
     }
 }
