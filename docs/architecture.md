@@ -26,6 +26,12 @@ out affected UI, collects damage, and asks the renderer to redraw damaged
 regions into a buffer. Wayland buffer release and frame callbacks determine
 when storage can be reused and when another frame should be submitted.
 
+Milestone 2 implements the first narrow slice of this flow. Calloop dispatches
+the Wayland event queue, SCTK owns protocol state and shared-memory buffer
+slots, and the layer-shell configure event triggers a single solid-color draw.
+The pure `render::fill_solid_argb` function is separate from protocol code so
+pixel generation can be tested without a compositor.
+
 ## Deliberate boundaries
 
 Rendering is kept behind a small internal interface so a GPU backend can be
@@ -35,4 +41,3 @@ API, and v1 will not build abstractions for hypothetical backends.
 Patin reuses focused libraries for standards-heavy work. It does not reimplement
 Wayland protocol machinery, font shaping, D-Bus, or complex system-service
 protocols merely to remain "from scratch."
-

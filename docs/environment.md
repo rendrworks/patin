@@ -14,8 +14,23 @@ cargo --version
 cargo build
 ```
 
-The foundation has no third-party Rust or system dependencies. Later stages
-will document and add each dependency when it is first exercised.
+The first surface uses `smithay-client-toolkit` 0.21.1 with default features
+disabled and only its `calloop` feature enabled. SCTK supplies the Wayland
+client bindings, layer-shell protocol bindings, shared-memory slot pool,
+surface/output tracking, and Calloop event source. Keyboard support remains
+disabled until the input stage.
+
+Runtime requires a Wayland compositor that advertises `wl_compositor`, `wl_shm`,
+and `wlr-layer-shell-unstable-v1`. The client uses the pure Rust Wayland backend,
+so this stage does not require linking against the system `libwayland-client`.
+
+```sh
+echo "$WAYLAND_DISPLAY"
+cargo run
+```
+
+Patin reports a clear error and exits unsuccessfully when no compositor can be
+found or a required global is unavailable.
 
 ## Documentation
 
@@ -43,4 +58,3 @@ git diff --check
 Commands which require a compositor or hardware will be added to the
 corresponding stage rather than pretending they can be verified in foundation
 CI.
-

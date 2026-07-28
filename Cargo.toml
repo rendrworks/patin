@@ -12,4 +12,4 @@ name = "patin"
 path = "src/main.rs"
 
 [dependencies]
-
+smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop"] }

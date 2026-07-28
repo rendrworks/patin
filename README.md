@@ -4,8 +4,8 @@ Patin is a native Rust graphical shell for Wayland. It will draw its own bars,
 overlays, launcher, lock screen, and optional phone interface as an independent
 layer-shell client.
 
-> **Status:** Milestone 1 establishes the project and documentation. Patin does
-> not create a Wayland surface yet.
+> **Status:** Milestone 2 opens a native top layer-shell bar, reserves its
+> screen edge, and renders a solid color through shared memory.
 
 Patin is the visible surface layer intended to sit above
 [0xin](https://github.com/termworks/0xin), while remaining usable with other
@@ -25,9 +25,10 @@ features need them, rather than exposed as a general-purpose toolkit in v1.
   when that socket is unavailable.
 - Qt, QML, GTK, Electron, and other large GUI frameworks are out of scope.
 
-These dependencies and modules are architectural decisions, not current Cargo
-dependencies. Each will be added only when its first demonstrable stage needs
-it.
+Most of these dependencies and modules are architectural decisions rather than
+current Cargo dependencies. Milestone 2 adds
+`smithay-client-toolkit` 0.21.1 with its Calloop integration; later libraries
+will be added only when their first demonstrable stage needs them.
 
 ## Build and verify
 
@@ -36,14 +37,17 @@ Patin uses ordinary stable Rust and pins the exact toolchain in
 
 ```sh
 cargo build
+cargo run
 cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets --all-features -- -D warnings
 mdbook build
 ```
 
-The current binary intentionally exits without output. The first observable
-runtime behavior arrives in Milestone 2 as a solid-color layer-shell bar.
+`cargo run` connects to the compositor selected by `WAYLAND_DISPLAY`. The
+compositor must support `wlr-layer-shell-unstable-v1`. Patin creates one
+32-pixel-high purple bar on the default output, anchors it to the top edge,
+reserves a 32-pixel exclusive zone, and runs until interrupted.
 
 ## Documentation
 
@@ -71,4 +75,3 @@ book. Patin does not create commits on the user's behalf.
 ## License
 
 Patin is licensed under the [MIT License](LICENSE).
-
