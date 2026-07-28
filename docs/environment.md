@@ -25,9 +25,18 @@ client bindings, layer-shell protocol bindings, shared-memory slot pool,
 surface/output tracking, and Calloop event source. Keyboard support remains
 disabled until the input stage.
 
+The rendering stage adds:
+
+- `tiny-skia` 0.12.0 for CPU raster primitives;
+- `cosmic-text` 0.19.0 with fontconfig and Swash for system-font discovery,
+  shaping, layout, fallback, and glyph rasterization;
+- Chrono 0.4.45 for local wall-clock time.
+
 Runtime requires a Wayland compositor that advertises `wl_compositor`, `wl_shm`,
 and `wlr-layer-shell-unstable-v1`. The client uses the pure Rust Wayland backend,
 so this stage does not require linking against the system `libwayland-client`.
+`wp_fractional_scale_manager_v1` and `wp_viewporter` are optional; compositors
+without them use the integer `wl_output` scale path.
 
 ```sh
 echo "$WAYLAND_DISPLAY"

@@ -26,11 +26,21 @@ out affected UI, collects damage, and asks the renderer to redraw damaged
 regions into a buffer. Wayland buffer release and frame callbacks determine
 when storage can be reused and when another frame should be submitted.
 
-Milestone 2 implements the first narrow slice of this flow. Calloop dispatches
-the Wayland event queue, SCTK owns protocol state and shared-memory buffer
-slots, and the layer-shell configure event triggers a single solid-color draw.
-The pure `render::fill_solid_argb` function is separate from protocol code so
-pixel generation can be tested without a compositor.
+Calloop dispatches the Wayland event queue and clock timer. SCTK owns protocol
+state and shared-memory slots. Configure, scale, and minute changes mark the
+bar for redraw; Wayland frame callbacks ensure Patin does not submit another
+frame while one is pending.
+
+`CpuRenderer` owns tiny-skia, the cosmic-text font system, and its glyph cache.
+It receives only a byte canvas, physical dimensions, scale, and component
+content. Wayland protocol objects stay outside the renderer. Tiny-skia produces
+premultiplied RGBA pixels internally, which the renderer converts to
+little-endian Wayland ARGB8888 when copying into `wl_shm`.
+
+Logical surface size and physical buffer size are separate. Fractional scale is
+represented in protocol-native 120ths, physical dimensions are rounded upward,
+and `wp_viewport` maps that buffer back to the compositor-provided logical
+surface size.
 
 ## Deliberate boundaries
 

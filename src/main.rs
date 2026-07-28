@@ -1,21 +1,35 @@
 mod render;
 
-use std::{error::Error, process::ExitCode};
+use std::{error::Error, process::ExitCode, time::Duration};
 
+use chrono::{Local, Timelike};
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState},
+    compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
-        calloop::EventLoop,
+        calloop::{
+            EventLoop,
+            timer::{TimeoutAction, Timer},
+        },
         calloop_wayland_source::WaylandSource,
         client::{
-            Connection, QueueHandle,
+            Connection, Dispatch, QueueHandle,
             globals::registry_queue_init,
             protocol::{wl_output, wl_shm, wl_surface},
         },
+        protocols::wp::{
+            fractional_scale::v1::client::{
+                wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+                wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+            },
+            viewporter::client::{
+                wp_viewport::{self, WpViewport},
+                wp_viewporter::WpViewporter,
+            },
+        },
     },
-    registry::{ProvidesRegistryState, RegistryState},
+    registry::{ProvidesRegistryState, RegistryState, SimpleGlobal},
     registry_handlers,
     shell::{
         WaylandSurface,
@@ -27,7 +41,7 @@ use smithay_client_toolkit::{
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
 
-use crate::render::{BAR_COLOR_ARGB, fill_solid_argb};
+use crate::render::{CpuRenderer, Scale};
 
 const BAR_HEIGHT: u32 = 32;
 const BYTES_PER_PIXEL: usize = 4;
@@ -57,7 +71,22 @@ fn run() -> Result<(), Box<dyn Error>> {
     let shm = Shm::bind(&globals, &queue_handle)
         .map_err(|error| format!("compositor does not provide wl_shm: {error}"))?;
 
+    let viewporter = SimpleGlobal::<WpViewporter, 1>::bind(&globals, &queue_handle).ok();
+    let fractional_scale_manager =
+        SimpleGlobal::<WpFractionalScaleManagerV1, 1>::bind(&globals, &queue_handle).ok();
+
     let surface = compositor.create_surface(&queue_handle);
+    let viewport = viewporter
+        .as_ref()
+        .and_then(|manager| manager.get().ok())
+        .map(|manager| manager.get_viewport(&surface, &queue_handle, ()));
+    let fractional_scale = viewport.as_ref().and_then(|_| {
+        fractional_scale_manager
+            .as_ref()
+            .and_then(|manager| manager.get().ok())
+            .map(|manager| manager.get_fractional_scale(&surface, &queue_handle, ()))
+    });
+
     let layer =
         layer_shell.create_layer_surface(&queue_handle, surface, Layer::Top, Some("patin"), None);
     layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
@@ -73,17 +102,52 @@ fn run() -> Result<(), Box<dyn Error>> {
         shm,
         pool,
         layer,
-        size: None,
+        _viewporter: viewporter,
+        viewport,
+        _fractional_scale_manager: fractional_scale_manager,
+        _fractional_scale: fractional_scale,
+        renderer: CpuRenderer::new(),
+        logical_size: None,
+        scale: Scale::ONE,
+        has_fractional_preference: false,
+        frame_pending: false,
+        redraw_requested: false,
+        clock: current_clock(),
         exit: false,
     };
+
+    event_loop.handle().insert_source(
+        Timer::from_duration(Duration::from_secs(1)),
+        |_, _, patin| {
+            let clock = current_clock();
+            if clock != patin.clock {
+                patin.clock = clock;
+                patin.redraw_requested = true;
+            }
+            TimeoutAction::ToDuration(Duration::from_secs(1))
+        },
+    )?;
 
     eprintln!("patin: connected; waiting for the compositor to configure the bar");
 
     while !patin.exit {
         event_loop.dispatch(None, &mut patin)?;
+
+        if patin.redraw_requested && !patin.frame_pending {
+            patin.draw(&queue_handle);
+        }
     }
 
     Ok(())
+}
+
+fn current_clock() -> String {
+    let now = Local::now();
+    format_clock(now.hour(), now.minute())
+}
+
+fn format_clock(hour: u32, minute: u32) -> String {
+    format!("{hour:02}:{minute:02}")
 }
 
 struct Patin {
@@ -92,33 +156,80 @@ struct Patin {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
-    size: Option<(u32, u32)>,
+    _viewporter: Option<SimpleGlobal<WpViewporter, 1>>,
+    viewport: Option<WpViewport>,
+    _fractional_scale_manager: Option<SimpleGlobal<WpFractionalScaleManagerV1, 1>>,
+    _fractional_scale: Option<WpFractionalScaleV1>,
+    renderer: CpuRenderer,
+    logical_size: Option<(u32, u32)>,
+    scale: Scale,
+    has_fractional_preference: bool,
+    frame_pending: bool,
+    redraw_requested: bool,
+    clock: String,
     exit: bool,
 }
 
 impl Patin {
-    fn draw(&mut self, width: u32, height: u32) {
-        let stride = width as i32 * BYTES_PER_PIXEL as i32;
+    fn request_redraw(&mut self, queue_handle: &QueueHandle<Self>) {
+        self.redraw_requested = true;
+        if !self.frame_pending {
+            self.draw(queue_handle);
+        }
+    }
+
+    fn draw(&mut self, queue_handle: &QueueHandle<Self>) {
+        let Some((logical_width, logical_height)) = self.logical_size else {
+            return;
+        };
+
+        let physical_width = self.scale.physical(logical_width);
+        let physical_height = self.scale.physical(logical_height);
+        let stride = physical_width as i32 * BYTES_PER_PIXEL as i32;
         let (buffer, canvas) = self
             .pool
             .create_buffer(
-                width as i32,
-                height as i32,
+                physical_width as i32,
+                physical_height as i32,
                 stride,
                 wl_shm::Format::Argb8888,
             )
             .expect("shared-memory buffer creation failed");
 
-        fill_solid_argb(canvas, BAR_COLOR_ARGB);
+        self.renderer
+            .render_bar(
+                canvas,
+                physical_width,
+                physical_height,
+                self.scale,
+                &self.clock,
+            )
+            .expect("CPU rendering failed");
 
         let surface = self.layer.wl_surface();
-        surface.damage_buffer(0, 0, width as i32, height as i32);
+        if let Some(viewport) = &self.viewport {
+            surface.set_buffer_scale(1);
+            viewport.set_destination(logical_width as i32, logical_height as i32);
+        } else {
+            let integer_scale = i32::try_from(self.scale.physical(1)).unwrap_or(i32::MAX);
+            surface.set_buffer_scale(integer_scale);
+        }
+
+        surface.damage_buffer(0, 0, physical_width as i32, physical_height as i32);
+        surface.frame(queue_handle, FrameCallbackData(surface.clone()));
         buffer
             .attach_to(surface)
             .expect("shared-memory buffer attachment failed");
         self.layer.commit();
 
-        eprintln!("patin: rendered {width}x{height} top bar with a {height}px exclusive zone");
+        self.frame_pending = true;
+        self.redraw_requested = false;
+
+        eprintln!(
+            "patin: rendered {physical_width}x{physical_height} buffer for \
+             {logical_width}x{logical_height} logical bar ({})",
+            self.clock
+        );
     }
 }
 
@@ -135,20 +246,19 @@ impl LayerShellHandler for Patin {
     fn configure(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         _layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        let width = configure.new_size.0.max(1);
-        let height = configure.new_size.1.max(BAR_HEIGHT);
-
-        if self.size == Some((width, height)) {
-            return;
+        let size = (
+            configure.new_size.0.max(1),
+            configure.new_size.1.max(BAR_HEIGHT),
+        );
+        if self.logical_size != Some(size) {
+            self.logical_size = Some(size);
+            self.request_redraw(queue_handle);
         }
-
-        self.size = Some((width, height));
-        self.draw(width, height);
     }
 }
 
@@ -156,10 +266,19 @@ impl CompositorHandler for Patin {
     fn scale_factor_changed(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
-        _new_factor: i32,
+        new_factor: i32,
     ) {
+        if self.has_fractional_preference {
+            return;
+        }
+
+        let scale = Scale::from_integer(new_factor);
+        if self.scale != scale {
+            self.scale = scale;
+            self.request_redraw(queue_handle);
+        }
     }
 
     fn transform_changed(
@@ -174,10 +293,14 @@ impl CompositorHandler for Patin {
     fn frame(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
+        self.frame_pending = false;
+        if self.redraw_requested {
+            self.draw(queue_handle);
+        }
     }
 
     fn surface_enter(
@@ -196,6 +319,39 @@ impl CompositorHandler for Patin {
         _surface: &wl_surface::WlSurface,
         _output: &wl_output::WlOutput,
     ) {
+    }
+}
+
+impl Dispatch<WpFractionalScaleV1, ()> for Patin {
+    fn event(
+        state: &mut Self,
+        _proxy: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        _data: &(),
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            let scale = Scale::from_120ths(scale);
+            state.has_fractional_preference = true;
+            if state.scale != scale {
+                state.scale = scale;
+                state.request_redraw(queue_handle);
+            }
+        }
+    }
+}
+
+impl Dispatch<WpViewport, ()> for Patin {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WpViewport,
+        _event: wp_viewport::Event,
+        _data: &(),
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+    ) {
+        unreachable!("wp_viewport has no events in version 1")
     }
 }
 
@@ -235,6 +391,9 @@ impl OutputHandler for Patin {
     }
 }
 
+smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpViewporter);
+smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpFractionalScaleManagerV1);
+
 delegate_registry!(Patin);
 
 impl ProvidesRegistryState for Patin {
@@ -246,3 +405,14 @@ impl ProvidesRegistryState for Patin {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(Patin);
+
+#[cfg(test)]
+mod tests {
+    use super::format_clock;
+
+    #[test]
+    fn formats_clock_with_leading_zeroes() {
+        assert_eq!(format_clock(7, 5), "07:05");
+        assert_eq!(format_clock(23, 59), "23:59");
+    }
+}

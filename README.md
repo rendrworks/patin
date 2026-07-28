@@ -4,8 +4,8 @@ Patin is a native Rust graphical shell for Wayland. It will draw its own bars,
 overlays, launcher, lock screen, and optional phone interface as an independent
 layer-shell client.
 
-> **Status:** Milestone 2 opens a native top layer-shell bar, reserves its
-> screen edge, and renders a solid color through shared memory.
+> **Status:** Milestone 3 renders a scale-aware clock and drawing primitives
+> into the native layer-shell bar.
 
 Patin is the visible surface layer intended to sit above
 [0xin](https://github.com/termworks/0xin), while remaining usable with other
@@ -19,16 +19,15 @@ features need them, rather than exposed as a general-purpose toolkit in v1.
 - `smithay-client-toolkit` will provide the Wayland client foundation.
 - CPU rendering with `wl_shm`, `tiny-skia`, and `cosmic-text` comes first.
 - `calloop` will drive events and `zbus` will connect standard system services.
-- Desktop is the default profile; phone UI is opt-in and is never constructed
-  in desktop mode.
+- Shell compositions select only the modules they enable.
 - 0xin integration will use a replaceable IPC adapter. Patin must still start
   when that socket is unavailable.
 - Qt, QML, GTK, Electron, and other large GUI frameworks are out of scope.
 
-Most of these dependencies and modules are architectural decisions rather than
-current Cargo dependencies. Milestone 2 adds
-`smithay-client-toolkit` 0.21.1 with its Calloop integration; later libraries
-will be added only when their first demonstrable stage needs them.
+The current implementation uses `smithay-client-toolkit` 0.21.1 with Calloop,
+`tiny-skia` 0.12.0 for CPU drawing, `cosmic-text` 0.19.0 for shaping and
+rasterization, and Chrono 0.4.45 for local clock time. Later libraries are
+added only when their first demonstrable stage needs them.
 
 ## Build and verify
 
@@ -46,8 +45,10 @@ mdbook build
 
 `cargo run` connects to the compositor selected by `WAYLAND_DISPLAY`. The
 compositor must support `wlr-layer-shell-unstable-v1`. Patin creates one
-32-pixel-high purple bar on the default output, anchors it to the top edge,
-reserves a 32-pixel exclusive zone, and runs until interrupted.
+32-logical-pixel bar on the default output, anchors it to the top edge, reserves
+a matching exclusive zone, and draws a right-aligned clock. Fractional scale
+and viewporter protocols are used when available, with integer scaling as the
+fallback.
 
 ### Portability
 

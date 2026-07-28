@@ -12,4 +12,7 @@ name = "patin"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["fontconfig", "std", "swash"] }
 smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop"] }
+tiny-skia = { version = "=0.12.0", default-features = false, features = ["std"] }
