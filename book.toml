@@ -1,0 +1,15 @@
+[book]
+title = "Patin"
+description = "A native Rust graphical shell for Wayland, built and documented one stage at a time."
+authors = ["Pier van der Zee"]
+src = "docs"
+language = "en"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/termworks/patin"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+

@@ -1,0 +1,15 @@
+[package]
+name = "patin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+description = "A native Rust graphical shell for Wayland"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "patin"
+path = "src/main.rs"
+
+[dependencies]
+
