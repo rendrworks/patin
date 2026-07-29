@@ -76,26 +76,23 @@ impl DemoBar {
     }
 
     fn layout(&mut self) {
-        let mut lengths = vec![Length::Fill(1.0)];
-        if self.battery.is_some() {
-            lengths.push(Length::Fixed(76.0));
-        }
-        if self.volume.is_some() {
-            lengths.push(Length::Fixed(84.0));
-        }
-        if self.brightness.is_some() {
-            lengths.push(Length::Fixed(76.0));
-        }
-        if self.network.is_some() {
-            lengths.push(Length::Fixed(76.0));
-        }
+        let status_count = [
+            self.battery.is_some(),
+            self.volume.is_some(),
+            self.brightness.is_some(),
+            self.network.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        let mut lengths = vec![Length::Fill(1.0); status_count.max(1)];
         lengths.push(Length::Fixed(72.0));
         let children = row(
             Rect::new(0.0, 0.0, self.size.width, self.size.height),
             self.style.gap,
             &lengths,
         );
-        let mut index = 1;
+        let mut index = 0;
         self.battery_bounds = self.battery.as_ref().map(|_| {
             let bounds = children[index];
             index += 1;
@@ -116,7 +113,7 @@ impl DemoBar {
             index += 1;
             bounds
         });
-        self.clock_bounds = children[index];
+        self.clock_bounds = children[children.len() - 1];
     }
 
     fn set_status(
