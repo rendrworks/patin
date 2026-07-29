@@ -43,6 +43,12 @@ The UI core adds no external dependency. Its logical geometry, layout,
 styling, scene commands, hit-testing, and damage tracking are internal Rust
 modules built around demonstrated shell components.
 
+Battery status requires a system battery under `/sys/class/power_supply`.
+Volume status tries `wpctl get-volume @DEFAULT_AUDIO_SINK@`, then PulseAudio
+compatibility through `pactl get-sink-volume` and `get-sink-mute`. These tools
+are optional runtime capabilities; Patin continues without their components
+when neither path succeeds.
+
 ```sh
 echo "$WAYLAND_DISPLAY"
 cargo run
@@ -74,6 +80,18 @@ testing a standalone compositor:
 ```sh
 ssh <host> 'pkill -TERM -x 0xin'
 ```
+
+The current FP5 test checkout can be launched from its own terminal with:
+
+```sh
+env -u LD_LIBRARY_PATH \
+  XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+  WAYLAND_DISPLAY=wayland-0 \
+  /tmp/patin-fp5-test/target/release/patin
+```
+
+Because the checkout is under `/tmp`, rebuild or install the binary to a
+persistent user path after a reboot.
 
 ## Documentation
 

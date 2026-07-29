@@ -73,11 +73,19 @@ Row
 └── Clock (fixed preference)
 ```
 
-The scene owns component state and styling. It emits a small command list for
-the current frame and records logical damaged rectangles when state changes.
+The scene owns component state and styling. Optional battery and volume
+components join the row only when their providers return values. It emits a
+small command list for the current frame and records logical damaged rectangles
+when state changes.
 Resize and scale changes damage the full bar; toggle and clock changes damage
 only their component bounds. The Wayland boundary converts those rectangles to
 outward-rounded physical buffer coordinates.
+
+Service discovery and transport remain outside the scene. `SystemStatus`
+returns an optional snapshot, and the scene knows only the formatted component
+values. The initial adapters poll the Linux power-supply ABI and `wpctl`/`pactl`;
+event-driven D-Bus and native audio adapters can replace them without changing
+layout or rendering.
 
 ## Deliberate boundaries
 

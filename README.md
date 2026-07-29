@@ -5,7 +5,8 @@ overlays, launcher, lock screen, and optional phone interface as an independent
 layer-shell client.
 
 > **Status:** Milestone 5 lays out the bar through an internal UI scene with
-> reusable geometry, styling, hit-testing, and damage tracking.
+> reusable geometry, styling, hit-testing, and damage tracking. Optional
+> battery and volume status components are now connected to narrow providers.
 
 Patin is the visible surface layer intended to sit above
 [0xin](https://github.com/termworks/0xin), while remaining usable with other
@@ -53,6 +54,31 @@ emits renderer-neutral drawing commands and tracks component damage.
 Fractional scale and viewporter protocols are used when available, with integer
 scaling as the fallback. Patin never requests keyboard interactivity for the
 bar.
+
+Battery status is read from Linux's standard power-supply interface. Volume
+uses `wpctl` when a PipeWire default sink exists and falls back to `pactl`.
+Either component is omitted when its provider is unavailable.
+
+### Run on the FP5
+
+The current native test build can be launched directly in an FP5 terminal:
+
+```sh
+env -u LD_LIBRARY_PATH \
+  XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+  WAYLAND_DISPLAY=wayland-0 \
+  /tmp/patin-fp5-test/target/release/patin
+```
+
+The `/tmp` checkout is temporary and may disappear after reboot. From the
+laptop, the same command can be invoked with:
+
+```sh
+ssh -t fp5 'env -u LD_LIBRARY_PATH \
+  XDG_RUNTIME_DIR=/run/user/$(id -u) \
+  WAYLAND_DISPLAY=wayland-0 \
+  /tmp/patin-fp5-test/target/release/patin'
+```
 
 ### Portability
 

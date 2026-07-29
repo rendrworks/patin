@@ -23,8 +23,11 @@ proportionally rather than overflowing or receiving negative sizes.
 The current bar is a row:
 
 ```text
-Toggle (180) | Spacer (fill) | Clock (72)
+Toggle (180) | Spacer (fill) | [Battery] | [Volume] | Clock (72)
 ```
+
+Bracketed status components participate only when their providers are
+available.
 
 ## Scene and styling
 
@@ -78,10 +81,11 @@ mdbook build
 git diff --check
 ```
 
-Seven unit tests passed. Three cover the existing renderer and clock behavior;
+Nine unit tests passed. Four cover the existing renderer, clock, and volume
+parsing behavior;
 three new layout tests cover row fill distribution, column/stack geometry, and
 narrow-output shrinking; one scene test covers generated hit bounds and
-component-local damage.
+component-local damage; another covers optional status relayout and commands.
 
 On the local `3440x32` logical output, the screenshot confirmed the visible
 layout was preserved. Real pointer presses toggled the state in both directions
@@ -99,3 +103,17 @@ patin: rendered 1222x77 buffer for 509x32 logical bar (1 damaged region)
 Repeated single-touch and overlapping two-finger input toggled the
 scene-generated target correctly. Every state change reported one damage
 region. Stopping Patin left the compositor and Wayland socket alive.
+
+## Status-component follow-up
+
+The same scene boundary was then used for optional battery and volume
+components. On the laptop, a screenshot showed `BAT 100%+` and `VOL MUTE`. On
+the FP5, Patin reported and rendered:
+
+```text
+patin: status providers: battery=BAT 55%+, volume=VOL 65%
+```
+
+The FP5 had no native PipeWire default sink at test time, so the volume adapter
+correctly fell back to its PulseAudio-compatible default sink. No device name
+or hardware branch was added.

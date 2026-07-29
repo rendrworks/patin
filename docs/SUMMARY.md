@@ -4,6 +4,7 @@
 
 - [Architecture](architecture.md)
 - [Environment and Toolchain](environment.md)
+- [Status Services](status-services.md)
 - [Roadmap](roadmap.md)
 
 # Build Stages

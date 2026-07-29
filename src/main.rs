@@ -1,4 +1,5 @@
 mod render;
+mod services;
 mod ui;
 
 use std::{error::Error, process::ExitCode, time::Duration};
@@ -49,6 +50,7 @@ use smithay_client_toolkit::{
 
 use crate::{
     render::{CpuRenderer, Scale},
+    services::SystemStatus,
     ui::{BarScene, Size},
 };
 
@@ -105,6 +107,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     layer.commit();
 
     let pool = SlotPool::new(BAR_HEIGHT as usize * BYTES_PER_PIXEL, &shm)?;
+    let system_status = SystemStatus::new();
+    let status = system_status.poll();
+    eprintln!(
+        "patin: status providers: battery={}, volume={}",
+        status.battery.as_deref().unwrap_or("unavailable"),
+        status.volume.as_deref().unwrap_or("unavailable")
+    );
+    let mut scene = BarScene::new(current_clock());
+    scene.set_status(status.battery, status.volume);
     let mut patin = Patin {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &queue_handle),
@@ -122,7 +133,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         has_fractional_preference: false,
         frame_pending: false,
         redraw_requested: false,
-        scene: BarScene::new(current_clock()),
+        scene,
+        system_status,
         pointers: Vec::new(),
         touches: Vec::new(),
         active_touches: Vec::new(),
@@ -137,6 +149,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                 patin.redraw_requested = true;
             }
             TimeoutAction::ToDuration(Duration::from_secs(1))
+        },
+    )?;
+    event_loop.handle().insert_source(
+        Timer::from_duration(Duration::from_secs(2)),
+        |_, _, patin| {
+            let status = patin.system_status.poll();
+            if patin.scene.set_status(status.battery, status.volume) {
+                patin.redraw_requested = true;
+            }
+            TimeoutAction::ToDuration(Duration::from_secs(2))
         },
     )?;
 
@@ -180,6 +202,7 @@ struct Patin {
     frame_pending: bool,
     redraw_requested: bool,
     scene: BarScene,
+    system_status: SystemStatus,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     active_touches: Vec<(wl_touch::WlTouch, i32)>,

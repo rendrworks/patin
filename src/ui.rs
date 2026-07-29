@@ -193,8 +193,12 @@ pub struct BarScene {
     size: Size,
     style: BarStyle,
     toggle_bounds: Rect,
+    battery_bounds: Option<Rect>,
+    volume_bounds: Option<Rect>,
     clock_bounds: Rect,
     toggle_active: bool,
+    battery: Option<String>,
+    volume: Option<String>,
     clock: String,
     damage: Vec<Rect>,
 }
@@ -205,8 +209,12 @@ impl BarScene {
             size: Size::default(),
             style: BarStyle::default(),
             toggle_bounds: Rect::default(),
+            battery_bounds: None,
+            volume_bounds: None,
             clock_bounds: Rect::default(),
             toggle_active: false,
+            battery: None,
+            volume: None,
             clock,
             damage: Vec::new(),
         }
@@ -217,14 +225,37 @@ impl BarScene {
             return;
         }
         self.size = size;
+        self.layout();
+        self.damage_all();
+    }
+
+    fn layout(&mut self) {
+        let mut lengths = vec![Length::Fixed(180.0), Length::Fill(1.0)];
+        if self.battery.is_some() {
+            lengths.push(Length::Fixed(76.0));
+        }
+        if self.volume.is_some() {
+            lengths.push(Length::Fixed(84.0));
+        }
+        lengths.push(Length::Fixed(72.0));
         let children = row(
-            Rect::new(0.0, 0.0, size.width, size.height),
+            Rect::new(0.0, 0.0, self.size.width, self.size.height),
             self.style.gap,
-            &[Length::Fixed(180.0), Length::Fill(1.0), Length::Fixed(72.0)],
+            &lengths,
         );
         self.toggle_bounds = children[0];
-        self.clock_bounds = children[2];
-        self.damage = vec![Rect::new(0.0, 0.0, size.width, size.height)];
+        let mut index = 2;
+        self.battery_bounds = self.battery.as_ref().map(|_| {
+            let bounds = children[index];
+            index += 1;
+            bounds
+        });
+        self.volume_bounds = self.volume.as_ref().map(|_| {
+            let bounds = children[index];
+            index += 1;
+            bounds
+        });
+        self.clock_bounds = children[index];
     }
 
     pub fn set_clock(&mut self, clock: String) -> bool {
@@ -238,6 +269,32 @@ impl BarScene {
 
     pub fn damage_all(&mut self) {
         self.damage = vec![Rect::new(0.0, 0.0, self.size.width, self.size.height)];
+    }
+
+    pub fn set_status(&mut self, battery: Option<String>, volume: Option<String>) -> bool {
+        if self.battery == battery && self.volume == volume {
+            return false;
+        }
+
+        let layout_changed = self.battery.is_some() != battery.is_some()
+            || self.volume.is_some() != volume.is_some();
+        let battery_changed = self.battery != battery;
+        let volume_changed = self.volume != volume;
+        self.battery = battery;
+        self.volume = volume;
+
+        if layout_changed {
+            self.layout();
+            self.damage_all();
+        } else {
+            if battery_changed && let Some(bounds) = self.battery_bounds {
+                self.damage.push(bounds);
+            }
+            if volume_changed && let Some(bounds) = self.volume_bounds {
+                self.damage.push(bounds);
+            }
+        }
+        true
     }
 
     pub fn hit_test(&self, position: (f64, f64)) -> Option<Action> {
@@ -262,7 +319,7 @@ impl BarScene {
     pub fn commands(&self) -> Vec<DrawCommand> {
         let full = Rect::new(0.0, 0.0, self.size.width, self.size.height);
         let accent = Rect::new(0.0, (self.size.height - 2.0).max(0.0), self.size.width, 2.0);
-        vec![
+        let mut commands = vec![
             DrawCommand::Fill {
                 bounds: full,
                 color: self.style.background,
@@ -292,16 +349,33 @@ impl BarScene {
                 family: FontFamily::SansSerif,
                 align: TextAlign::Center,
             },
-            DrawCommand::Text {
-                bounds: self.clock_bounds.inset(self.style.padding),
-                text: self.clock.clone(),
-                color: self.style.text,
-                font_size: 15.0,
-                line_height: 20.0,
-                family: FontFamily::Monospace,
-                align: TextAlign::End,
-            },
-        ]
+        ];
+        for (bounds, text) in [
+            (self.battery_bounds, self.battery.as_ref()),
+            (self.volume_bounds, self.volume.as_ref()),
+        ] {
+            if let (Some(bounds), Some(text)) = (bounds, text) {
+                commands.push(DrawCommand::Text {
+                    bounds: bounds.inset(self.style.padding),
+                    text: text.clone(),
+                    color: self.style.text,
+                    font_size: 12.0,
+                    line_height: 20.0,
+                    family: FontFamily::SansSerif,
+                    align: TextAlign::Center,
+                });
+            }
+        }
+        commands.push(DrawCommand::Text {
+            bounds: self.clock_bounds.inset(self.style.padding),
+            text: self.clock.clone(),
+            color: self.style.text,
+            font_size: 15.0,
+            line_height: 20.0,
+            family: FontFamily::Monospace,
+            align: TextAlign::End,
+        });
+        commands
     }
 
     pub fn take_damage(&mut self) -> Vec<Rect> {
@@ -311,7 +385,7 @@ impl BarScene {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, BarScene, Length, Rect, Size, column, row, stack};
+    use super::{Action, BarScene, DrawCommand, Length, Rect, Size, column, row, stack};
 
     #[test]
     fn row_assigns_remaining_space_to_fill_children() {
@@ -364,5 +438,29 @@ mod tests {
         let damage = scene.take_damage();
         assert_eq!(damage.len(), 1);
         assert_eq!(damage[0], Rect::new(0.0, 0.0, 180.0, 32.0));
+    }
+
+    #[test]
+    fn optional_status_components_relayout_and_render() {
+        let mut scene = BarScene::new("12:00".into());
+        scene.resize(Size {
+            width: 509.0,
+            height: 32.0,
+        });
+        scene.take_damage();
+
+        assert!(scene.set_status(Some("BAT 55%+".into()), Some("VOL 65%".into())));
+        assert_eq!(scene.take_damage(), vec![Rect::new(0.0, 0.0, 509.0, 32.0)]);
+        let labels = scene
+            .commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                DrawCommand::Text { text, .. } => Some(text),
+                DrawCommand::Fill { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"BAT 55%+".to_owned()));
+        assert!(labels.contains(&"VOL 65%".to_owned()));
     }
 }
