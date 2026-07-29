@@ -6,6 +6,9 @@ use std::{
     process::Command,
 };
 
+use patin::service::Provider;
+use patin_service_upower::{BatteryProvider, BatterySnapshot};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StatusSnapshot {
     pub battery: Option<String>,
@@ -14,24 +17,32 @@ pub struct StatusSnapshot {
 }
 
 pub struct SystemStatus {
-    power_supply_root: PathBuf,
+    battery: BatteryProvider,
     backlight_root: PathBuf,
 }
 
 impl SystemStatus {
     pub fn new() -> Self {
         Self {
-            power_supply_root: PathBuf::from("/sys/class/power_supply"),
+            battery: BatteryProvider::new(),
             backlight_root: PathBuf::from("/sys/class/backlight"),
         }
     }
 
-    pub fn poll(&self) -> StatusSnapshot {
+    pub fn poll(&mut self) -> StatusSnapshot {
         StatusSnapshot {
-            battery: read_battery(&self.power_supply_root),
+            battery: self.battery.poll().map(format_battery),
             volume: read_volume(),
             brightness: read_brightness(&self.backlight_root),
         }
+    }
+}
+
+fn format_battery(snapshot: BatterySnapshot) -> String {
+    if snapshot.charging {
+        format!("BAT {}%+", snapshot.percentage)
+    } else {
+        format!("BAT {}%", snapshot.percentage)
     }
 }
 
@@ -57,35 +68,6 @@ fn brightness_label(current: u64, maximum: u64) -> Option<String> {
     (maximum > 0).then(|| {
         let percentage = current.saturating_mul(100).div_ceil(maximum).min(100);
         format!("BRI {percentage}%")
-    })
-}
-
-fn read_battery(root: &Path) -> Option<String> {
-    let mut batteries = fs::read_dir(root)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            (read_trimmed(path.join("type")).as_deref() == Some("Battery")).then_some(path)
-        })
-        .collect::<Vec<_>>();
-    batteries.sort();
-    batteries.sort_by_key(|path| read_trimmed(path.join("scope")).as_deref() != Some("System"));
-
-    batteries.into_iter().find_map(|path| {
-        let capacity = read_trimmed(path.join("capacity"))?
-            .parse::<u8>()
-            .ok()?
-            .min(100);
-        let charging = matches!(
-            read_trimmed(path.join("status")).as_deref(),
-            Some("Charging" | "Full")
-        );
-        Some(if charging {
-            format!("BAT {capacity}%+")
-        } else {
-            format!("BAT {capacity}%")
-        })
     })
 }
 

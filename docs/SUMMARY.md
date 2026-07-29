@@ -15,3 +15,4 @@
 - [Stage 4 — Pointer and Touch Input](stages/stage-4-input.md)
 - [Stage 5 — Internal UI Core](stages/stage-5-ui-core.md)
 - [Stage 5b — Toolkit and Example Boundary](stages/stage-5b-toolkit-boundary.md)
+- [Stage 6a — UPower Battery Service Adapter](stages/stage-6a-upower-battery.md)

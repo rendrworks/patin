@@ -55,7 +55,7 @@ pub struct DemoBar {
 
 impl DemoBar {
     pub fn new() -> Self {
-        let status = SystemStatus::new();
+        let mut status = SystemStatus::new();
         let snapshot = status.poll();
         eprintln!(
             "demo_bar: status providers: battery={}, volume={}, brightness={}",

@@ -6,12 +6,17 @@ missing provider does not prevent the example from starting.
 
 ## Battery
 
-The first battery provider reads Linux's documented power-supply sysfs ABI. It
-discovers entries whose `type` is `Battery`, prefers `scope` `System`, and reads
-`capacity` and `status`. It does not depend on battery names such as `BAT0` or
-on a hardware model.
+Battery now comes from `crates/patin-service-upower`'s `BatteryProvider`, a
+toolkit-level, opt-in adapter (see [Architecture](architecture.md#service-adapters)
+and [Stage 6a](stages/stage-6a-upower-battery.md)), not a demo-only fixture.
+It reads UPower's synthetic `DisplayDevice` over D-Bus — the aggregate device
+UPower maintains specifically for status bars — via `zbus`'s blocking API,
+fetching the `Percentage` and `State` properties. It does not depend on
+battery names such as `BAT0` or on a hardware model. A missing system bus or
+UPower service returns `None`, same as the demo's other optional fixtures.
 
-The display format is `BAT 55%`; charging or full state appends `+`.
+The display format is `BAT 55%`; a `State` of charging or fully charged
+appends `+`.
 
 ## Volume
 
@@ -38,6 +43,6 @@ Unchanged values produce no redraw; changed values damage only their component.
 Provider appearance or disappearance changes row membership and damages the
 full bar.
 
-Command polling is intentionally a test fixture, not the toolkit's service
-architecture. Optional reusable provider crates may be designed later from
-demonstrated consumer needs.
+Volume and brightness are still command/sysfs test fixtures, not toolkit
+service architecture. Battery has moved to the pattern they may follow later:
+an out-of-tree, opt-in crate implementing `patin::service::Provider`.

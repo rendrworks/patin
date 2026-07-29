@@ -19,7 +19,8 @@ it is not intended to become a general-purpose application GUI framework.
   mechanisms.
 - `smithay-client-toolkit` will provide the Wayland client foundation.
 - CPU rendering with `wl_shm`, `tiny-skia`, and `cosmic-text` comes first.
-- `calloop` will drive events and `zbus` will connect standard system services.
+- `calloop` drives events. Optional adapter crates use `zbus` to connect
+  standard system services; the core `patin` crate never depends on `zbus`.
 - The library never automatically constructs a bar, phone UI, battery reader,
   volume reader, or compositor-specific adapter.
 - 0xin integration will use a replaceable IPC adapter. Patin must still start
@@ -27,8 +28,17 @@ it is not intended to become a general-purpose application GUI framework.
 - Qt, QML, GTK, Electron, and other large GUI frameworks are out of scope.
 
 The toolkit uses `smithay-client-toolkit` 0.21.1 with Calloop, `tiny-skia`
-0.12.0, and `cosmic-text` 0.19.0. Chrono and the provisional battery, audio,
-and brightness providers are used by the demo only.
+0.12.0, and `cosmic-text` 0.19.0. Chrono and the provisional audio and
+brightness providers are used by the demo only.
+
+## Workspace
+
+Patin is a Cargo workspace. The root package is the `patin` toolkit crate
+itself; `crates/` holds optional, opt-in service-adapter crates that
+implement `patin::service::Provider` against a specific system service.
+`crates/patin-service-upower` is the first one, providing battery state over
+D-Bus/UPower. A consumer depends on `patin` alone, or additionally on
+whichever adapter crates it wants; none are pulled in automatically.
 
 ## Build and verify
 
@@ -36,11 +46,11 @@ Patin uses ordinary stable Rust and pins the exact toolchain in
 `rust-toolchain.toml`.
 
 ```sh
-cargo build
+cargo build --workspace
 cargo run --example demo_bar
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 mdbook build
 ```
 

@@ -8,6 +8,10 @@ Patin is a library organized around narrow shell-toolkit boundaries:
   `tiny-skia`; text is shaped and rasterized with `cosmic-text`.
 - **UI** owns internal geometry, row/column/stack layout, style resolution,
   hit-testing, and damage collection.
+- **Service adapters** are optional, out-of-tree crates that implement
+  `patin::service::Provider` against one system service (D-Bus or otherwise).
+  Patin never constructs one; a consumer depends on and instantiates the
+  ones it wants.
 - **Consumers** own components, services, and compositions. The demo bar is one
   consumer used to verify the library.
 - **Compositor integration** exposes workspace state and commands through a
@@ -82,6 +86,28 @@ outward-rounded physical buffer coordinates.
 The status adapters and Chrono dependency are example implementation details.
 They are not exported by `src/lib.rs` and are never constructed by
 `platform::run`.
+
+## Service adapters
+
+`patin::service::Provider` is a minimal, dependency-free trait: `poll(&mut
+self) -> Self::Snapshot`. It is the only thing the core crate contributes to
+service integration. Construction is left to each adapter, since opening a
+D-Bus connection or similar can fail in ways only that adapter understands.
+
+Concrete adapters live in their own workspace crates under `crates/`, never
+in `src/`, so their dependencies (`zbus`, and later whatever a network or
+media adapter needs) never reach a consumer that only wants the toolkit.
+`crates/patin-service-upower` is the first one: it polls UPower's
+`DisplayDevice` — the synthetic aggregate battery device UPower maintains
+for shells — over `zbus`'s blocking API, and degrades to `None` when no
+system bus or UPower service is reachable, the same failure behavior as the
+demo's other optional status fixtures.
+
+This first adapter is intentionally poll-based, reusing the same
+`Shell::update` tick the demo already had. A push-only service such as
+notifications will need a way to wake the platform event loop from a
+background thread between ticks; that plumbing does not exist yet and is
+scoped to whichever future stage first needs it.
 
 ## Deliberate boundaries
 
