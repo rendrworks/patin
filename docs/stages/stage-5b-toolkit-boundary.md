@@ -57,6 +57,10 @@ patin
 The installed `patin` executable is a copy of the demo example under
 `~/.local/bin`; it is not an automatically built toolkit binary.
 
+Per-frame and raw-touch platform diagnostics are opt-in with `PATIN_TRACE=1`.
+Normal demo runs retain startup/provider and error messages without continuously
+printing frame submissions.
+
 The installer was run on the FP5 and a fresh login shell resolved and launched
 the short command:
 

@@ -67,6 +67,13 @@ does not add a default binary to the toolkit crate. The FP5 login profile
 already includes `~/.local/bin` in `PATH`; open a new terminal after the first
 installation if the current shell has not loaded that profile.
 
+Normal runs print only startup/provider information and errors. Enable
+per-frame damage and raw touch diagnostics when needed:
+
+```sh
+PATIN_TRACE=1 patin
+```
+
 The current temporary native demo build can also be launched directly:
 
 ```sh

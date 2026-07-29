@@ -173,6 +173,7 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
         pointers: Vec::new(),
         touches: Vec::new(),
         active_touches: Vec::new(),
+        trace: std::env::var_os("PATIN_TRACE").is_some(),
         exit: false,
     };
 
@@ -220,6 +221,7 @@ struct Patin {
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     active_touches: Vec<(wl_touch::WlTouch, i32)>,
+    trace: bool,
     exit: bool,
 }
 
@@ -287,12 +289,14 @@ impl Patin {
         self.frame_pending = true;
         self.redraw_requested = false;
 
-        eprintln!(
-            "patin: rendered {physical_width}x{physical_height} buffer for \
-             {logical_width}x{logical_height} logical bar ({} damaged region{})",
-            damage.len(),
-            if damage.len() == 1 { "" } else { "s" }
-        );
+        if self.trace {
+            eprintln!(
+                "patin: rendered {physical_width}x{physical_height} buffer for \
+                 {logical_width}x{logical_height} logical surface ({} damaged region{})",
+                damage.len(),
+                if damage.len() == 1 { "" } else { "s" }
+            );
+        }
     }
 
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
@@ -595,10 +599,12 @@ impl TouchHandler for Patin {
         {
             self.active_touches.push((touch.clone(), id));
         }
-        eprintln!(
-            "patin: touch contact {id} down; active contacts: {}",
-            self.active_touches.len()
-        );
+        if self.trace {
+            eprintln!(
+                "patin: touch contact {id} down; active contacts: {}",
+                self.active_touches.len()
+            );
+        }
 
         if surface == *self.layer.wl_surface() {
             self.activate_at(queue_handle, position);
@@ -616,10 +622,12 @@ impl TouchHandler for Patin {
     ) {
         self.active_touches
             .retain(|(known_touch, known_id)| known_touch != touch || *known_id != id);
-        eprintln!(
-            "patin: touch contact {id} up; active contacts: {}",
-            self.active_touches.len()
-        );
+        if self.trace {
+            eprintln!(
+                "patin: touch contact {id} up; active contacts: {}",
+                self.active_touches.len()
+            );
+        }
     }
 
     fn motion(
@@ -662,7 +670,9 @@ impl TouchHandler for Patin {
     ) {
         self.active_touches
             .retain(|(known_touch, _)| known_touch != touch);
-        eprintln!("patin: touch sequence cancelled");
+        if self.trace {
+            eprintln!("patin: touch sequence cancelled");
+        }
     }
 }
 

@@ -109,6 +109,13 @@ Ensure the login profile contains this conventional user binary directory:
 PATH="$PATH:$HOME/.local/bin"
 ```
 
+Frame submission and raw touch logs are disabled during normal operation. To
+debug rendering, scaling, damage, or contact delivery:
+
+```sh
+PATIN_TRACE=1 patin
+```
+
 ## Documentation
 
 The book is built with mdBook 0.5.3 in CI and Pages automation.
