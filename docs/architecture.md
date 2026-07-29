@@ -1,7 +1,6 @@
 # Architecture
 
-Patin will be organized around narrow internal boundaries. These are intended
-directions rather than empty modules in the foundation:
+Patin is a library organized around narrow shell-toolkit boundaries:
 
 - **Platform** owns Wayland connections, globals, outputs, seats, input events,
   layer surfaces, shared-memory buffers, and the event loop.
@@ -9,27 +8,24 @@ directions rather than empty modules in the foundation:
   `tiny-skia`; text is shaped and rasterized with `cosmic-text`.
 - **UI** owns internal geometry, row/column/stack layout, style resolution,
   hit-testing, and damage collection.
-- **Components** combine UI primitives into bars, clocks, launchers, overlays,
-  quick settings, and notification views.
-- **Services** expose typed state from standard system interfaces such as
-  D-Bus, without coupling UI components to transport details.
-- **Compositions** select and arrange shared components for a use case. A
-  composition instantiates only the modules it enables.
+- **Consumers** own components, services, and compositions. The demo bar is one
+  consumer used to verify the library.
 - **Compositor integration** exposes workspace state and commands through a
   replaceable adapter. Its neutral implementation works without compositor
   IPC; a later 0xin adapter will use the documented control socket.
 
 ## Data flow
 
-The event loop receives platform and service events, updates shell state, lays
-out affected UI, collects damage, and asks the renderer to redraw damaged
-regions into a buffer. Wayland buffer release and frame callbacks determine
-when storage can be reused and when another frame should be submitted.
+The platform event loop receives Wayland and timer events and calls a consumer
+implementation of `Shell`. The consumer updates its state, returns logical draw
+commands and damage, and decides how input positions affect its composition.
+Wayland buffer release and frame callbacks determine when storage can be reused
+and when another frame should be submitted.
 
-Calloop dispatches the Wayland event queue and clock timer. SCTK owns protocol
-state and shared-memory slots. Configure, scale, and minute changes mark the
-bar for redraw; Wayland frame callbacks ensure Patin does not submit another
-frame while one is pending.
+Calloop dispatches the Wayland event queue and a general consumer update tick.
+SCTK owns protocol state and shared-memory slots. Configure, scale, input, or
+consumer updates can mark a surface for redraw; frame callbacks ensure Patin
+does not submit another frame while one is pending.
 
 `CpuRenderer` owns tiny-skia, the cosmic-text font system, and its glyph cache.
 It receives only a byte canvas, physical dimensions, scale, and a list of
@@ -53,8 +49,9 @@ Every touch contact is handled independently. Active contacts are keyed by
 their touch protocol object and contact ID, so overlapping contacts remain
 distinct across seats.
 
-The bar uses layer-shell keyboard interactivity `None`. Clicking or touching it
-therefore does not request keyboard focus from the compositor.
+The consumer supplies `LayerConfig`: namespace, layer level, anchors, logical
+size, exclusive zone, and keyboard policy. The demo chooses a top exclusive
+bar with keyboard policy `None`; the toolkit does not choose those values.
 
 ## Internal UI core
 
@@ -64,34 +61,33 @@ lengths along one axis; stack assigns the same bounds to layered children.
 When fixed children cannot fit, they shrink proportionally instead of
 generating negative or overflowing rectangles.
 
-`BarScene` is a retained internal component composition:
+`examples/demo_bar/scene.rs` is a retained test composition:
 
 ```text
 Row
 ├── Toggle (fixed preference)
 ├── Spacer (weighted fill)
+├── Optional status fixtures
 └── Clock (fixed preference)
 ```
 
-The scene owns component state and styling. Optional battery and volume
-components join the row only when their providers return values. It emits a
-small command list for the current frame and records logical damaged rectangles
-when state changes.
+The example owns component state and styling. Optional battery, volume, and
+brightness fixtures join its row only when their providers return values. It
+emits a small command list and records logical damaged rectangles when state
+changes.
 Resize and scale changes damage the full bar; toggle and clock changes damage
 only their component bounds. The Wayland boundary converts those rectangles to
 outward-rounded physical buffer coordinates.
 
-Service discovery and transport remain outside the scene. `SystemStatus`
-returns an optional snapshot, and the scene knows only the formatted component
-values. The initial adapters poll the Linux power-supply ABI and `wpctl`/`pactl`;
-event-driven D-Bus and native audio adapters can replace them without changing
-layout or rendering.
+The status adapters and Chrono dependency are example implementation details.
+They are not exported by `src/lib.rs` and are never constructed by
+`platform::run`.
 
 ## Deliberate boundaries
 
-Rendering is kept behind a small internal interface so a GPU backend can be
-added if measurements justify it. This is not a promise of a public renderer
-API, and v1 will not build abstractions for hypothetical backends.
+Rendering is kept behind a small interface so a GPU backend can be added if
+measurements justify it. Patin exposes only shell-focused primitives and does
+not build abstractions for hypothetical application GUI use.
 
 Core behavior must not branch on hardware models, connector names, fixed
 resolutions, compositor brands, or assumed scales. Outputs, transforms, input

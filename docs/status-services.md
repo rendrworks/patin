@@ -1,8 +1,8 @@
-# Status Services
+# Demo Status Fixtures
 
-Patin's service boundary returns optional values to the UI. A missing service
-does not prevent the shell from starting and does not reserve an empty
-component in the row.
+These providers belong to `examples/demo_bar`, not the Patin library. They
+exercise optional values, dynamic row membership, and component damage. A
+missing provider does not prevent the example from starting.
 
 ## Battery
 
@@ -24,12 +24,20 @@ interface. The initial adapter tries:
 This supports a native PipeWire default sink and the common PulseAudio
 compatibility service. Failure of both commands returns no component.
 
+## Brightness
+
+The demo discovers entries under Linux's `/sys/class/backlight`, reads
+`brightness` and `max_brightness`, and displays `BRI n%`. It does not assume a
+driver or panel name. A missing or invalid backlight entry removes the fixture
+from the demo row.
+
 ## Polling and future replacement
 
-Calloop polls the snapshot every two seconds. Unchanged values produce no
-redraw; changed values damage only their component. Provider appearance or
-disappearance changes row membership and damages the full bar.
+The demo's `Shell::update` polls the snapshot once per platform update.
+Unchanged values produce no redraw; changed values damage only their component.
+Provider appearance or disappearance changes row membership and damages the
+full bar.
 
-Command polling is intentionally a small first integration, not the final
-service architecture. Milestone 6 can add event-driven UPower D-Bus and native
-PipeWire/PulseAudio providers behind the same optional snapshot boundary.
+Command polling is intentionally a test fixture, not the toolkit's service
+architecture. Optional reusable provider crates may be designed later from
+demonstrated consumer needs.

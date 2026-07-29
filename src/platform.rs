@@ -1,10 +1,3 @@
-mod render;
-mod services;
-mod ui;
-
-use std::{error::Error, process::ExitCode, time::Duration};
-
-use chrono::{Local, Timelike};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
@@ -47,27 +40,57 @@ use smithay_client_toolkit::{
     },
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
+use std::{error::Error, time::Duration};
 
 use crate::{
     render::{CpuRenderer, Scale},
-    services::SystemStatus,
-    ui::{BarScene, Size},
+    ui::{DrawCommand, Rect, Size},
 };
 
-const BAR_HEIGHT: u32 = 32;
 const BYTES_PER_PIXEL: usize = 4;
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("patin: {error}");
-            ExitCode::FAILURE
-        }
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayerLevel {
+    Background,
+    Bottom,
+    Top,
+    Overlay,
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyboardPolicy {
+    None,
+    Exclusive,
+    OnDemand,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Anchors {
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+pub struct LayerConfig {
+    pub namespace: String,
+    pub layer: LayerLevel,
+    pub anchors: Anchors,
+    pub size: (u32, u32),
+    pub exclusive_zone: i32,
+    pub keyboard: KeyboardPolicy,
+}
+
+pub trait Shell {
+    fn resize(&mut self, size: Size);
+    fn update(&mut self) -> bool;
+    fn activate_at(&mut self, position: (f64, f64)) -> bool;
+    fn commands(&self) -> Vec<DrawCommand>;
+    fn take_damage(&mut self) -> Vec<Rect>;
+    fn damage_all(&mut self);
+}
+
+pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<dyn Error>> {
     let connection = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init(&connection)?;
     let queue_handle = event_queue.handle();
@@ -98,24 +121,36 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(|manager| manager.get_fractional_scale(&surface, &queue_handle, ()))
     });
 
-    let layer =
-        layer_shell.create_layer_surface(&queue_handle, surface, Layer::Top, Some("patin"), None);
-    layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
-    layer.set_size(0, BAR_HEIGHT);
-    layer.set_exclusive_zone(BAR_HEIGHT as i32);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    let layer = layer_shell.create_layer_surface(
+        &queue_handle,
+        surface,
+        match config.layer {
+            LayerLevel::Background => Layer::Background,
+            LayerLevel::Bottom => Layer::Bottom,
+            LayerLevel::Top => Layer::Top,
+            LayerLevel::Overlay => Layer::Overlay,
+        },
+        Some(config.namespace),
+        None,
+    );
+    let mut anchor = Anchor::empty();
+    anchor.set(Anchor::TOP, config.anchors.top);
+    anchor.set(Anchor::BOTTOM, config.anchors.bottom);
+    anchor.set(Anchor::LEFT, config.anchors.left);
+    anchor.set(Anchor::RIGHT, config.anchors.right);
+    layer.set_anchor(anchor);
+    layer.set_size(config.size.0, config.size.1);
+    layer.set_exclusive_zone(config.exclusive_zone);
+    layer.set_keyboard_interactivity(match config.keyboard {
+        KeyboardPolicy::None => KeyboardInteractivity::None,
+        KeyboardPolicy::Exclusive => KeyboardInteractivity::Exclusive,
+        KeyboardPolicy::OnDemand => KeyboardInteractivity::OnDemand,
+    });
     layer.commit();
 
-    let pool = SlotPool::new(BAR_HEIGHT as usize * BYTES_PER_PIXEL, &shm)?;
-    let system_status = SystemStatus::new();
-    let status = system_status.poll();
-    eprintln!(
-        "patin: status providers: battery={}, volume={}",
-        status.battery.as_deref().unwrap_or("unavailable"),
-        status.volume.as_deref().unwrap_or("unavailable")
-    );
-    let mut scene = BarScene::new(current_clock());
-    scene.set_status(status.battery, status.volume);
+    let initial_pool_size =
+        config.size.0.max(1) as usize * config.size.1.max(1) as usize * BYTES_PER_PIXEL;
+    let pool = SlotPool::new(initial_pool_size, &shm)?;
     let mut patin = Patin {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &queue_handle),
@@ -128,13 +163,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         _fractional_scale_manager: fractional_scale_manager,
         _fractional_scale: fractional_scale,
         renderer: CpuRenderer::new(),
+        requested_size: config.size,
         logical_size: None,
         scale: Scale::ONE,
         has_fractional_preference: false,
         frame_pending: false,
         redraw_requested: false,
-        scene,
-        system_status,
+        shell: Box::new(shell),
         pointers: Vec::new(),
         touches: Vec::new(),
         active_touches: Vec::new(),
@@ -144,24 +179,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     event_loop.handle().insert_source(
         Timer::from_duration(Duration::from_secs(1)),
         |_, _, patin| {
-            let clock = current_clock();
-            if patin.scene.set_clock(clock) {
+            if patin.shell.update() {
                 patin.redraw_requested = true;
             }
             TimeoutAction::ToDuration(Duration::from_secs(1))
         },
     )?;
-    event_loop.handle().insert_source(
-        Timer::from_duration(Duration::from_secs(2)),
-        |_, _, patin| {
-            let status = patin.system_status.poll();
-            if patin.scene.set_status(status.battery, status.volume) {
-                patin.redraw_requested = true;
-            }
-            TimeoutAction::ToDuration(Duration::from_secs(2))
-        },
-    )?;
-
     eprintln!("patin: connected; waiting for the compositor to configure the bar");
 
     while !patin.exit {
@@ -173,15 +196,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
-}
-
-fn current_clock() -> String {
-    let now = Local::now();
-    format_clock(now.hour(), now.minute())
-}
-
-fn format_clock(hour: u32, minute: u32) -> String {
-    format!("{hour:02}:{minute:02}")
 }
 
 struct Patin {
@@ -196,13 +210,13 @@ struct Patin {
     _fractional_scale_manager: Option<SimpleGlobal<WpFractionalScaleManagerV1, 1>>,
     _fractional_scale: Option<WpFractionalScaleV1>,
     renderer: CpuRenderer,
+    requested_size: (u32, u32),
     logical_size: Option<(u32, u32)>,
     scale: Scale,
     has_fractional_preference: bool,
     frame_pending: bool,
     redraw_requested: bool,
-    scene: BarScene,
-    system_status: SystemStatus,
+    shell: Box<dyn Shell>,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     active_touches: Vec<(wl_touch::WlTouch, i32)>,
@@ -235,7 +249,7 @@ impl Patin {
             )
             .expect("shared-memory buffer creation failed");
 
-        let commands = self.scene.commands();
+        let commands = self.shell.commands();
         self.renderer
             .render_bar(
                 canvas,
@@ -255,7 +269,7 @@ impl Patin {
             surface.set_buffer_scale(integer_scale);
         }
 
-        let damage = self.scene.take_damage();
+        let damage = self.shell.take_damage();
         for rect in &damage {
             let factor = self.scale.factor();
             let x = (rect.origin.x * factor).floor() as i32;
@@ -282,16 +296,7 @@ impl Patin {
     }
 
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
-        if let Some(action) = self.scene.hit_test(position) {
-            self.scene.activate(action);
-            eprintln!(
-                "patin: toggle activated; state is {}",
-                if self.scene.toggle_active() {
-                    "on"
-                } else {
-                    "off"
-                }
-            );
+        if self.shell.activate_at(position) {
             self.request_redraw(queue_handle);
         }
     }
@@ -316,12 +321,12 @@ impl LayerShellHandler for Patin {
         _serial: u32,
     ) {
         let size = (
-            configure.new_size.0.max(1),
-            configure.new_size.1.max(BAR_HEIGHT),
+            configure.new_size.0.max(self.requested_size.0).max(1),
+            configure.new_size.1.max(self.requested_size.1).max(1),
         );
         if self.logical_size != Some(size) {
             self.logical_size = Some(size);
-            self.scene.resize(Size {
+            self.shell.resize(Size {
                 width: size.0 as f32,
                 height: size.1 as f32,
             });
@@ -345,7 +350,7 @@ impl CompositorHandler for Patin {
         let scale = Scale::from_integer(new_factor);
         if self.scale != scale {
             self.scale = scale;
-            self.scene.damage_all();
+            self.shell.damage_all();
             self.request_redraw(queue_handle);
         }
     }
@@ -405,7 +410,7 @@ impl Dispatch<WpFractionalScaleV1, ()> for Patin {
             state.has_fractional_preference = true;
             if state.scale != scale {
                 state.scale = scale;
-                state.scene.damage_all();
+                state.shell.damage_all();
                 state.request_redraw(queue_handle);
             }
         }
@@ -675,14 +680,3 @@ impl ProvidesRegistryState for Patin {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(Patin);
-
-#[cfg(test)]
-mod tests {
-    use super::format_clock;
-
-    #[test]
-    fn formats_clock_with_leading_zeroes() {
-        assert_eq!(format_clock(7, 5), "07:05");
-        assert_eq!(format_clock(23, 59), "23:59");
-    }
-}

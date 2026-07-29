@@ -1,6 +1,8 @@
 # Roadmap
 
-Patin grows in visible, testable stages:
+Patin grows in visible, testable stages. Visible shell features are examples
+and templates that validate toolkit APIs; they are not automatically
+instantiated by the library:
 
 1. **Foundation** — establish the pinned Rust project, documentation, checks,
    license, and publishing automation.
@@ -12,13 +14,12 @@ Patin grows in visible, testable stages:
    changes bar state without affecting application focus.
 5. **UI core** — add internal row, column, and stack layout, styling,
    hit-testing, damage tracking, and reusable components.
-6. **Services** — expose battery, network, audio, notifications, and media
-   state through standard system interfaces.
-7. **Mobile profile** — add opt-in phone navigation, launcher, quick settings,
-   notifications, and keyboard control.
+6. **Service adapters** — design optional provider interfaces from demonstrated
+   battery, network, audio, notification, and media examples.
+7. **Composition templates** — exercise phone navigation, launchers, quick
+   settings, notifications, and keyboard control without making them defaults.
 8. **Compositor integration** — add a replaceable adapter for 0xin workspace
    state and commands.
 
 CPU rendering comes first. A GPU renderer is considered only after measurement
 shows a real performance need.
-

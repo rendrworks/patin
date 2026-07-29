@@ -46,6 +46,12 @@ pub struct CpuRenderer {
     swash_cache: SwashCache,
 }
 
+impl Default for CpuRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuRenderer {
     pub fn new() -> Self {
         Self {

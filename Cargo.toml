@@ -3,13 +3,9 @@ name = "patin"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
-description = "A native Rust graphical shell for Wayland"
+description = "A native Rust toolkit for building Wayland graphical shells"
 license = "MIT"
 publish = false
-
-[[bin]]
-name = "patin"
-path = "src/main.rs"
 
 [dependencies]
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }

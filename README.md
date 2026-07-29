@@ -1,34 +1,34 @@
 # Patin
 
-Patin is a native Rust graphical shell for Wayland. It will draw its own bars,
-overlays, launcher, lock screen, and optional phone interface as an independent
-layer-shell client.
+Patin is a native Rust toolkit for building Wayland graphical shells. It
+provides the platform, rendering, layout, input, and damage foundations from
+which a consumer can compose bars, overlays, launchers, lock screens, and
+other shell surfaces.
 
-> **Status:** Milestone 5 lays out the bar through an internal UI scene with
-> reusable geometry, styling, hit-testing, and damage tracking. Optional
-> battery and volume status components are now connected to narrow providers.
+> **Status:** Patin is a library. The visible demo bar is an example/test
+> consumer and is not instantiated by the toolkit.
 
-Patin is the visible surface layer intended to sit above
-[0xin](https://github.com/termworks/0xin), while remaining usable with other
-compositors that implement layer-shell. It is an opinionated shell first:
-reusable UI and rendering primitives will be developed internally as real
-features need them, rather than exposed as a general-purpose toolkit in v1.
+Patin clients can run above [0xin](https://github.com/termworks/0xin) or another
+compatible layer-shell compositor. Patin is focused on graphical-shell needs;
+it is not intended to become a general-purpose application GUI framework.
 
 ## Direction
 
-- Rust owns shell behavior, layout, rendering abstractions, and services.
+- Consumers own shell behavior, composition, components, and service choices.
+- Patin owns reusable Wayland, layout, rendering, input, scale, and damage
+  mechanisms.
 - `smithay-client-toolkit` will provide the Wayland client foundation.
 - CPU rendering with `wl_shm`, `tiny-skia`, and `cosmic-text` comes first.
 - `calloop` will drive events and `zbus` will connect standard system services.
-- Shell compositions select only the modules they enable.
+- The library never automatically constructs a bar, phone UI, battery reader,
+  volume reader, or compositor-specific adapter.
 - 0xin integration will use a replaceable IPC adapter. Patin must still start
   when that socket is unavailable.
 - Qt, QML, GTK, Electron, and other large GUI frameworks are out of scope.
 
-The current implementation uses `smithay-client-toolkit` 0.21.1 with Calloop,
-`tiny-skia` 0.12.0 for CPU drawing, `cosmic-text` 0.19.0 for shaping and
-rasterization, and Chrono 0.4.45 for local clock time. Later libraries are
-added only when their first demonstrable stage needs them.
+The toolkit uses `smithay-client-toolkit` 0.21.1 with Calloop, `tiny-skia`
+0.12.0, and `cosmic-text` 0.19.0. Chrono and the provisional battery, audio,
+and brightness providers are used by the demo only.
 
 ## Build and verify
 
@@ -37,37 +37,43 @@ Patin uses ordinary stable Rust and pins the exact toolchain in
 
 ```sh
 cargo build
-cargo run
+cargo run --example demo_bar
 cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets --all-features -- -D warnings
 mdbook build
 ```
 
-`cargo run` connects to the compositor selected by `WAYLAND_DISPLAY`. The
-compositor must support `wlr-layer-shell-unstable-v1`. Patin creates one
-32-logical-pixel bar on the default output, anchors it to the top edge, reserves
-a matching exclusive zone, and draws a right-aligned clock plus a `SHELL OFF`
-target. A left click or touch inside the target toggles its state and redraws
-it. A row layout places the toggle, flexible spacer, and clock; the UI scene
-emits renderer-neutral drawing commands and tracks component damage.
-Fractional scale and viewporter protocols are used when available, with integer
-scaling as the fallback. Patin never requests keyboard interactivity for the
-bar.
+The example connects to the compositor selected by `WAYLAND_DISPLAY`, creates
+a top layer-shell bar, and demonstrates layout, rendering, input, scaling, and
+damage. Its clock, toggle, battery, and volume are fixtures for proving toolkit
+behavior, not built-in Patin components.
 
-Battery status is read from Linux's standard power-supply interface. Volume
-uses `wpctl` when a PipeWire default sink exists and falls back to `pactl`.
-Either component is omitted when its provider is unavailable.
+Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
+and pass both to `patin::platform::run`.
 
 ### Run on the FP5
 
-The current native test build can be launched directly in an FP5 terminal:
+For a persistent one-word user command, run this from a Patin checkout on the
+FP5:
+
+```sh
+./scripts/install-demo-user.sh
+patin
+```
+
+This explicitly installs the `demo_bar` example as `~/.local/bin/patin`. It
+does not add a default binary to the toolkit crate. The FP5 login profile
+already includes `~/.local/bin` in `PATH`; open a new terminal after the first
+installation if the current shell has not loaded that profile.
+
+The current temporary native demo build can also be launched directly:
 
 ```sh
 env -u LD_LIBRARY_PATH \
   XDG_RUNTIME_DIR="/run/user/$(id -u)" \
   WAYLAND_DISPLAY=wayland-0 \
-  /tmp/patin-fp5-test/target/release/patin
+  /tmp/patin-fp5-test/target/release/examples/demo_bar
 ```
 
 The `/tmp` checkout is temporary and may disappear after reboot. From the
@@ -77,7 +83,7 @@ laptop, the same command can be invoked with:
 ssh -t fp5 'env -u LD_LIBRARY_PATH \
   XDG_RUNTIME_DIR=/run/user/$(id -u) \
   WAYLAND_DISPLAY=wayland-0 \
-  /tmp/patin-fp5-test/target/release/patin'
+  /tmp/patin-fp5-test/target/release/examples/demo_bar'
 ```
 
 ### Portability

@@ -1,3 +1,5 @@
+//! Optional status providers used only by the demo bar.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -8,16 +10,19 @@ use std::{
 pub struct StatusSnapshot {
     pub battery: Option<String>,
     pub volume: Option<String>,
+    pub brightness: Option<String>,
 }
 
 pub struct SystemStatus {
     power_supply_root: PathBuf,
+    backlight_root: PathBuf,
 }
 
 impl SystemStatus {
     pub fn new() -> Self {
         Self {
             power_supply_root: PathBuf::from("/sys/class/power_supply"),
+            backlight_root: PathBuf::from("/sys/class/backlight"),
         }
     }
 
@@ -25,8 +30,34 @@ impl SystemStatus {
         StatusSnapshot {
             battery: read_battery(&self.power_supply_root),
             volume: read_volume(),
+            brightness: read_brightness(&self.backlight_root),
         }
     }
+}
+
+fn read_brightness(root: &Path) -> Option<String> {
+    let mut entries = fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries.into_iter().find_map(|entry| {
+        let current = read_trimmed(entry.join("brightness"))?
+            .parse::<u64>()
+            .ok()?;
+        let maximum = read_trimmed(entry.join("max_brightness"))?
+            .parse::<u64>()
+            .ok()?;
+        brightness_label(current, maximum)
+    })
+}
+
+fn brightness_label(current: u64, maximum: u64) -> Option<String> {
+    (maximum > 0).then(|| {
+        let percentage = current.saturating_mul(100).div_ceil(maximum).min(100);
+        format!("BRI {percentage}%")
+    })
 }
 
 fn read_battery(root: &Path) -> Option<String> {
@@ -127,7 +158,7 @@ fn read_trimmed(path: PathBuf) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_wpctl_volume;
+    use super::{brightness_label, parse_wpctl_volume};
 
     #[test]
     fn parses_wpctl_volume_and_mute_state() {
@@ -137,5 +168,11 @@ mod tests {
             Some("VOL MUTE".into())
         );
         assert_eq!(parse_wpctl_volume("no sink"), None);
+    }
+
+    #[test]
+    fn formats_brightness_and_rejects_zero_maximum() {
+        assert_eq!(brightness_label(2405, 4095), Some("BRI 59%".into()));
+        assert_eq!(brightness_label(1, 0), None);
     }
 }

@@ -17,6 +17,7 @@ A rustup-based checkout selects the exact development pin through
 rustc --version
 cargo --version
 cargo build
+cargo run --example demo_bar
 ```
 
 The first surface uses `smithay-client-toolkit` 0.21.1 with default features
@@ -43,15 +44,13 @@ The UI core adds no external dependency. Its logical geometry, layout,
 styling, scene commands, hit-testing, and damage tracking are internal Rust
 modules built around demonstrated shell components.
 
-Battery status requires a system battery under `/sys/class/power_supply`.
-Volume status tries `wpctl get-volume @DEFAULT_AUDIO_SINK@`, then PulseAudio
-compatibility through `pactl get-sink-volume` and `get-sink-mute`. These tools
-are optional runtime capabilities; Patin continues without their components
-when neither path succeeds.
+The toolkit does not require a battery, backlight, or audio command. The demo
+optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and
+`pactl`; missing providers merely remove those demo labels.
 
 ```sh
 echo "$WAYLAND_DISPLAY"
-cargo run
+cargo run --example demo_bar
 ```
 
 Patin reports a clear error and exits unsuccessfully when no compositor can be
@@ -65,12 +64,12 @@ set them explicitly:
 
 ```sh
 cd ~/Projects/patin
-cargo build --release --locked
+cargo build --release --locked --example demo_bar
 
 env -u LD_LIBRARY_PATH \
   XDG_RUNTIME_DIR="/run/user/$(id -u)" \
   WAYLAND_DISPLAY=wayland-0 \
-  target/release/patin
+  target/release/examples/demo_bar
 ```
 
 Unsetting `LD_LIBRARY_PATH` prevents a shell client from loading 0xin's private
@@ -87,11 +86,28 @@ The current FP5 test checkout can be launched from its own terminal with:
 env -u LD_LIBRARY_PATH \
   XDG_RUNTIME_DIR="/run/user/$(id -u)" \
   WAYLAND_DISPLAY=wayland-0 \
-  /tmp/patin-fp5-test/target/release/patin
+  /tmp/patin-fp5-test/target/release/examples/demo_bar
 ```
 
 Because the checkout is under `/tmp`, rebuild or install the binary to a
 persistent user path after a reboot.
+
+## Installing the demo command
+
+The repository includes an explicit user installer for the example:
+
+```sh
+./scripts/install-demo-user.sh
+patin
+```
+
+It builds `demo_bar` in release mode and installs only that example executable
+as `~/.local/bin/patin`. The library still defines no default shell binary.
+Ensure the login profile contains this conventional user binary directory:
+
+```sh
+PATH="$PATH:$HOME/.local/bin"
+```
 
 ## Documentation
 
