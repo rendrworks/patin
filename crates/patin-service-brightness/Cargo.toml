@@ -1,0 +1,11 @@
+[package]
+name = "patin-service-brightness"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Optional display backlight provider for Patin shells (sysfs)"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+patin = { path = "../.." }

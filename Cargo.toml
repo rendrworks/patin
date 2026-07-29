@@ -14,10 +14,16 @@ smithay-client-toolkit = { version = "=0.21.1", default-features = false, featur
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+patin-service-brightness = { path = "crates/patin-service-brightness" }
 patin-service-upower = { path = "crates/patin-service-upower" }
+patin-service-volume = { path = "crates/patin-service-volume" }
 
 [workspace]
-members = ["crates/patin-service-upower"]
+members = [
+    "crates/patin-service-brightness",
+    "crates/patin-service-upower",
+    "crates/patin-service-volume",
+]
 
 [workspace.package]
 edition = "2024"

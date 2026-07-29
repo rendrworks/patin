@@ -1,19 +1,23 @@
-# Demo Status Fixtures
+# Status Providers
 
-These providers belong to `examples/demo_bar`, not the Patin library. They
-exercise optional values, dynamic row membership, and component damage. A
-missing provider does not prevent the example from starting.
+Battery, volume, and brightness are each an optional, opt-in toolkit crate
+implementing `patin::service::Provider` (see
+[Architecture](architecture.md#service-adapters)), not code inside the
+`patin` library or a demo-only fixture. `examples/demo_bar/services.rs`
+composes all three into one `StatusSnapshot` for its row layout — that
+composition, and the row's dynamic membership/damage behavior, remains the
+demo's own job. A missing provider does not prevent the example from
+starting.
 
 ## Battery
 
-Battery now comes from `crates/patin-service-upower`'s `BatteryProvider`, a
-toolkit-level, opt-in adapter (see [Architecture](architecture.md#service-adapters)
-and [Stage 6a](stages/stage-6a-upower-battery.md)), not a demo-only fixture.
-It reads UPower's synthetic `DisplayDevice` over D-Bus — the aggregate device
-UPower maintains specifically for status bars — via `zbus`'s blocking API,
-fetching the `Percentage` and `State` properties. It does not depend on
-battery names such as `BAT0` or on a hardware model. A missing system bus or
-UPower service returns `None`, same as the demo's other optional fixtures.
+`crates/patin-service-upower`'s `BatteryProvider` (see
+[Stage 6a](stages/stage-6a-upower-battery.md)) reads UPower's synthetic
+`DisplayDevice` over D-Bus — the aggregate device UPower maintains
+specifically for status bars — via `zbus`'s blocking API, fetching the
+`Percentage` and `State` properties. It does not depend on battery names
+such as `BAT0` or on a hardware model. A missing system bus or UPower
+service returns `None`.
 
 The display format is `BAT 55%`; a `State` of charging or fully charged
 appends `+`.
@@ -21,28 +25,34 @@ appends `+`.
 ## Volume
 
 Linux audio systems do not expose one universal standard D-Bus volume
-interface. The initial adapter tries:
+interface, so `crates/patin-service-volume`'s `VolumeProvider` (see
+[Stage 6b](stages/stage-6b-volume-brightness.md)) shells out instead:
 
 1. `wpctl get-volume @DEFAULT_AUDIO_SINK@`;
 2. `pactl get-sink-volume @DEFAULT_SINK@` plus `get-sink-mute`.
 
 This supports a native PipeWire default sink and the common PulseAudio
-compatibility service. Failure of both commands returns no component.
+compatibility service. Failure of both commands returns `None`. The display
+format is `VOL 55%`, or `VOL MUTE` when muted.
 
 ## Brightness
 
-The demo discovers entries under Linux's `/sys/class/backlight`, reads
-`brightness` and `max_brightness`, and displays `BRI n%`. It does not assume a
-driver or panel name. A missing or invalid backlight entry removes the fixture
-from the demo row.
+There is no portable D-Bus property to read the current backlight level
+(systemd-logind only exposes a `SetBrightness` method, not a readable one),
+so `crates/patin-service-brightness`'s `BacklightProvider` reads Linux's
+documented `/sys/class/backlight` ABI directly: it discovers entries, reads
+`brightness` and `max_brightness`, and returns a percentage. It does not
+assume a driver or panel name. A missing or invalid backlight entry returns
+`None`. The display format is `BRI n%`.
 
-## Polling and future replacement
+## Polling
 
-The demo's `Shell::update` polls the snapshot once per platform update.
-Unchanged values produce no redraw; changed values damage only their component.
-Provider appearance or disappearance changes row membership and damages the
-full bar.
+The demo's `Shell::update` polls all three providers once per platform
+update. Unchanged values produce no redraw; changed values damage only
+their component. A provider's snapshot appearing or disappearing changes
+row membership and damages the full bar.
 
-Volume and brightness are still command/sysfs test fixtures, not toolkit
-service architecture. Battery has moved to the pattern they may follow later:
-an out-of-tree, opt-in crate implementing `patin::service::Provider`.
+All three adapters are poll-based today, reusing the same once-per-second
+tick. A future push-only service (notifications, media) will need a way to
+wake the platform event loop from a background thread between ticks — that
+plumbing does not exist yet.

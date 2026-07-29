@@ -83,9 +83,11 @@ Resize and scale changes damage the full bar; toggle and clock changes damage
 only their component bounds. The Wayland boundary converts those rectangles to
 outward-rounded physical buffer coordinates.
 
-The status adapters and Chrono dependency are example implementation details.
-They are not exported by `src/lib.rs` and are never constructed by
-`platform::run`.
+Battery, volume, and brightness themselves are toolkit-level provider crates
+(see "Service adapters" below), not example implementation details — only
+their composition into one `StatusSnapshot` in `examples/demo_bar/services.rs`
+is. The Chrono dependency is a genuine example-only detail. None of this is
+exported by `src/lib.rs` or ever constructed by `platform::run`.
 
 ## Service adapters
 
@@ -97,13 +99,22 @@ D-Bus connection or similar can fail in ways only that adapter understands.
 Concrete adapters live in their own workspace crates under `crates/`, never
 in `src/`, so their dependencies (`zbus`, and later whatever a network or
 media adapter needs) never reach a consumer that only wants the toolkit.
-`crates/patin-service-upower` is the first one: it polls UPower's
-`DisplayDevice` — the synthetic aggregate battery device UPower maintains
-for shells — over `zbus`'s blocking API, and degrades to `None` when no
-system bus or UPower service is reachable, the same failure behavior as the
-demo's other optional status fixtures.
+Three exist so far, named by domain rather than mechanism except where one
+real service owns the domain outright:
 
-This first adapter is intentionally poll-based, reusing the same
+- `crates/patin-service-upower` polls UPower's `DisplayDevice` — the
+  synthetic aggregate battery device UPower maintains for shells — over
+  `zbus`'s blocking API.
+- `crates/patin-service-volume` and `crates/patin-service-brightness` have
+  no equivalent standard D-Bus interface to poll (noted in
+  [Status Providers](status-services.md)), so they shell out to
+  `wpctl`/`pactl` and read `/sys/class/backlight` respectively.
+
+All three degrade to `None` when their underlying service or file isn't
+reachable, the same failure behavior the demo's status fixtures already had
+before they moved into these crates.
+
+All three adapters are intentionally poll-based, reusing the same
 `Shell::update` tick the demo already had. A push-only service such as
 notifications will need a way to wake the platform event loop from a
 background thread between ticks; that plumbing does not exist yet and is

@@ -1,13 +1,11 @@
-//! Optional status providers used only by the demo bar.
-
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+//! Composes Patin's optional service-adapter crates into one snapshot for
+//! the demo bar's row layout. Owning this composition (which providers to
+//! poll and how to format them) is the demo's job, not the toolkit's.
 
 use patin::service::Provider;
+use patin_service_brightness::{BacklightProvider, BrightnessSnapshot};
 use patin_service_upower::{BatteryProvider, BatterySnapshot};
+use patin_service_volume::{VolumeProvider, VolumeSnapshot};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StatusSnapshot {
@@ -18,22 +16,24 @@ pub struct StatusSnapshot {
 
 pub struct SystemStatus {
     battery: BatteryProvider,
-    backlight_root: PathBuf,
+    volume: VolumeProvider,
+    brightness: BacklightProvider,
 }
 
 impl SystemStatus {
     pub fn new() -> Self {
         Self {
             battery: BatteryProvider::new(),
-            backlight_root: PathBuf::from("/sys/class/backlight"),
+            volume: VolumeProvider::new(),
+            brightness: BacklightProvider::new(),
         }
     }
 
     pub fn poll(&mut self) -> StatusSnapshot {
         StatusSnapshot {
             battery: self.battery.poll().map(format_battery),
-            volume: read_volume(),
-            brightness: read_brightness(&self.backlight_root),
+            volume: self.volume.poll().map(format_volume),
+            brightness: self.brightness.poll().map(format_brightness),
         }
     }
 }
@@ -46,115 +46,14 @@ fn format_battery(snapshot: BatterySnapshot) -> String {
     }
 }
 
-fn read_brightness(root: &Path) -> Option<String> {
-    let mut entries = fs::read_dir(root)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    entries.into_iter().find_map(|entry| {
-        let current = read_trimmed(entry.join("brightness"))?
-            .parse::<u64>()
-            .ok()?;
-        let maximum = read_trimmed(entry.join("max_brightness"))?
-            .parse::<u64>()
-            .ok()?;
-        brightness_label(current, maximum)
-    })
-}
-
-fn brightness_label(current: u64, maximum: u64) -> Option<String> {
-    (maximum > 0).then(|| {
-        let percentage = current.saturating_mul(100).div_ceil(maximum).min(100);
-        format!("BRI {percentage}%")
-    })
-}
-
-fn read_volume() -> Option<String> {
-    read_wpctl_volume().or_else(read_pactl_volume)
-}
-
-fn read_wpctl_volume() -> Option<String> {
-    let output = Command::new("wpctl")
-        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| parse_wpctl_volume(&String::from_utf8_lossy(&output.stdout)))
-        .flatten()
-}
-
-fn read_pactl_volume() -> Option<String> {
-    let volume = Command::new("pactl")
-        .args(["get-sink-volume", "@DEFAULT_SINK@"])
-        .output()
-        .ok()?;
-    if !volume.status.success() {
-        return None;
-    }
-    let percentage = String::from_utf8_lossy(&volume.stdout)
-        .split_whitespace()
-        .find(|word| word.ends_with('%'))?
-        .trim_end_matches('%')
-        .parse::<u8>()
-        .ok()?
-        .min(100);
-    let mute = Command::new("pactl")
-        .args(["get-sink-mute", "@DEFAULT_SINK@"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("yes"));
-    Some(if mute {
+fn format_volume(snapshot: VolumeSnapshot) -> String {
+    if snapshot.muted {
         "VOL MUTE".into()
     } else {
-        format!("VOL {percentage}%")
-    })
-}
-
-fn parse_wpctl_volume(output: &str) -> Option<String> {
-    let muted = output.contains("[MUTED]");
-    let value = output.split_whitespace().find_map(|word| {
-        word.trim_matches(|character: char| !character.is_ascii_digit() && character != '.')
-            .parse::<f32>()
-            .ok()
-    })?;
-    if muted {
-        Some("VOL MUTE".into())
-    } else {
-        Some(format!(
-            "VOL {}%",
-            (value * 100.0).round().clamp(0.0, 100.0)
-        ))
+        format!("VOL {}%", snapshot.percentage)
     }
 }
 
-fn read_trimmed(path: PathBuf) -> Option<String> {
-    fs::read_to_string(path)
-        .ok()
-        .map(|value| value.trim().to_owned())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{brightness_label, parse_wpctl_volume};
-
-    #[test]
-    fn parses_wpctl_volume_and_mute_state() {
-        assert_eq!(parse_wpctl_volume("Volume: 0.55\n"), Some("VOL 55%".into()));
-        assert_eq!(
-            parse_wpctl_volume("Volume: 1.00 [MUTED]\n"),
-            Some("VOL MUTE".into())
-        );
-        assert_eq!(parse_wpctl_volume("no sink"), None);
-    }
-
-    #[test]
-    fn formats_brightness_and_rejects_zero_maximum() {
-        assert_eq!(brightness_label(2405, 4095), Some("BRI 59%".into()));
-        assert_eq!(brightness_label(1, 0), None);
-    }
+fn format_brightness(snapshot: BrightnessSnapshot) -> String {
+    format!("BRI {}%", snapshot.percentage)
 }

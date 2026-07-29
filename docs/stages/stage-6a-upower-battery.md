@@ -111,13 +111,40 @@ patin: connected; waiting for the compositor to configure the bar
 
 Confirmed independently with `dbus-send --system ... org.freedesktop.UPower
 ...` that the service is genuinely `ServiceUnknown` here, so `unavailable` is
-the adapter degrading correctly, not a bug. This still needs to be re-run on
-a machine or the FP5 with `upowerd` active to see a real `BAT n%[+]` reading
-end to end.
+the adapter degrading correctly, not a bug.
 
 ```text
 $ mdbook build
  INFO Book building has started
  INFO Running the html backend
  INFO HTML book written to `/home/vdzee/proj/patin/book`
+```
+
+### FP5 end-to-end confirmation
+
+Verified on the FP5 the same day (postmarketOS edge, `aarch64`, `upowerd`
+genuinely active). The working tree was copied over with `tar` piped over
+SSH (no `rsync` on-device), built natively with
+`cargo build --release --locked --example demo_bar` (~4 minutes cold,
+fetching `zbus` and its transitive dependencies), then installed and
+launched via the existing `scripts/install-demo-user.sh`:
+
+```text
+demo_bar: status providers: battery=BAT 69%, volume=VOL 8%, brightness=BRI 70%
+patin: connected; waiting for the compositor to configure the bar
+```
+
+A real percentage from D-Bus/UPower, not `unavailable` — the adapter works
+end to end against the target device's actual UPower.
+
+Backgrounding it as a plain `setsid nohup ... &` SSH command was not enough
+to keep it alive: the phone's PAM session tears down its whole cgroup on SSH
+disconnect regardless of `setsid`. It stayed running only once launched as a
+transient systemd user unit instead:
+
+```sh
+systemd-run --user --unit=patin-demo --collect \
+  --setenv=XDG_RUNTIME_DIR=/run/user/10000 \
+  --setenv=WAYLAND_DISPLAY=wayland-0 \
+  -- /home/sn3rt/.local/bin/patin
 ```

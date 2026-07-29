@@ -666,9 +666,18 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-text",
+ "patin-service-brightness",
  "patin-service-upower",
+ "patin-service-volume",
  "smithay-client-toolkit",
  "tiny-skia",
+]
+
+[[package]]
+name = "patin-service-brightness"
+version = "0.1.0"
+dependencies = [
+ "patin",
 ]
 
 [[package]]
@@ -677,6 +686,13 @@ version = "0.1.0"
 dependencies = [
  "patin",
  "zbus",
+]
+
+[[package]]
+name = "patin-service-volume"
+version = "0.1.0"
+dependencies = [
+ "patin",
 ]
 
 [[package]]

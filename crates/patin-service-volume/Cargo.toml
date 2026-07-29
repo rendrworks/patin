@@ -1,0 +1,11 @@
+[package]
+name = "patin-service-volume"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Optional audio volume provider for Patin shells (wpctl/pactl)"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+patin = { path = "../.." }
