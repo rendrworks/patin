@@ -47,7 +47,9 @@ creates one protocol object per advertised capability and releases it when the
 capability or seat disappears. Both input paths receive surface-local logical
 coordinates and call the same pure rectangle hit test. Successful activations
 change component state and enter the existing frame-coalesced redraw path.
-Every touch contact is handled independently.
+Every touch contact is handled independently. Active contacts are keyed by
+their touch protocol object and contact ID, so overlapping contacts remain
+distinct across seats.
 
 The bar uses layer-shell keyboard interactivity `None`. Clicking or touching it
 therefore does not request keyboard focus from the compositor.

@@ -13,7 +13,7 @@ const CLOCK_LINE_HEIGHT: f32 = 20.0;
 const HORIZONTAL_PADDING: f32 = 12.0;
 const ACCENT_HEIGHT: f32 = 2.0;
 const TOGGLE_PADDING: f32 = 5.0;
-const TOGGLE_WIDTH: f32 = 112.0;
+const TOGGLE_WIDTH: f32 = 180.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Scale(u32);

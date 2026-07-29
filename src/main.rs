@@ -126,6 +126,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         toggle_active: false,
         pointers: Vec::new(),
         touches: Vec::new(),
+        active_touches: Vec::new(),
         exit: false,
     };
 
@@ -184,6 +185,7 @@ struct Patin {
     toggle_active: bool,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
+    active_touches: Vec<(wl_touch::WlTouch, i32)>,
     exit: bool,
 }
 
@@ -477,6 +479,10 @@ impl SeatHandler for Patin {
                 });
             }
             Capability::Touch => {
+                for (_, touch) in self.touches.iter().filter(|(known, _)| known == &seat) {
+                    self.active_touches
+                        .retain(|(active_touch, _)| active_touch != touch);
+                }
                 self.touches.retain(|(known, touch)| {
                     if known == &seat {
                         touch.release();
@@ -532,13 +538,25 @@ impl TouchHandler for Patin {
         &mut self,
         _connection: &Connection,
         queue_handle: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
+        touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
         surface: wl_surface::WlSurface,
-        _id: i32,
+        id: i32,
         position: (f64, f64),
     ) {
+        if !self
+            .active_touches
+            .iter()
+            .any(|(known_touch, known_id)| known_touch == touch && *known_id == id)
+        {
+            self.active_touches.push((touch.clone(), id));
+        }
+        eprintln!(
+            "patin: touch contact {id} down; active contacts: {}",
+            self.active_touches.len()
+        );
+
         if surface == *self.layer.wl_surface() {
             self.activate_at(queue_handle, position);
         }
@@ -548,11 +566,17 @@ impl TouchHandler for Patin {
         &mut self,
         _connection: &Connection,
         _queue_handle: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
+        touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
-        _id: i32,
+        id: i32,
     ) {
+        self.active_touches
+            .retain(|(known_touch, known_id)| known_touch != touch || *known_id != id);
+        eprintln!(
+            "patin: touch contact {id} up; active contacts: {}",
+            self.active_touches.len()
+        );
     }
 
     fn motion(
@@ -591,8 +615,11 @@ impl TouchHandler for Patin {
         &mut self,
         _connection: &Connection,
         _queue_handle: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
+        touch: &wl_touch::WlTouch,
     ) {
+        self.active_touches
+            .retain(|(known_touch, _)| known_touch != touch);
+        eprintln!("patin: touch sequence cancelled");
     }
 }
 

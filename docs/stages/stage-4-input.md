@@ -19,7 +19,7 @@ from an application.
 
 ## Visible behavior
 
-The leftmost 112 logical pixels form a visible `SHELL OFF` target. A primary
+The leftmost 180 logical pixels form a visible `SHELL OFF` target. A primary
 pointer press or a touch-down inside it toggles the state. The target becomes
 green and reads `SHELL ON`; another activation restores the initial state.
 Every touch-down is processed independently, including contacts delivered
@@ -39,7 +39,8 @@ before the UI-core stage.
   and touch availability for every seat.
 - `PointerHandler::pointer_frame` accepts only primary-button presses on
   Patin's layer surface.
-- `TouchHandler::down` handles each contact delivered on Patin's surface.
+- `TouchHandler::down`, `up`, and `cancel` track overlapping contacts by touch
+  object and contact ID.
 - `CpuRenderer::draw_toggle` draws the visible state at the current physical
   scale.
 
@@ -73,7 +74,13 @@ patin: rendered 1222x77 buffer for 509x32 logical bar
 ```
 
 Two real touchscreen activations changed the visible state and redrew the
-scaled buffer. Stopping Patin left the compositor process and Wayland socket
-alive. A simultaneous two-finger activation was not observed during this test,
-so that live check remains pending; the handler itself processes every
-touch-down event independently.
+scaled buffer. The initial 112-logical-pixel target was too narrow for a
+comfortable two-finger test, so it was widened generically to 180 logical
+pixels and active-contact logging was added.
+
+A follow-up simultaneous two-finger tap then repeatedly reported distinct
+contact IDs with `active contacts: 2`. On the final attempts both contacts
+activated the target before either contact produced an `up` event, toggling
+`off → on → off` with a redraw after each activation. This confirms genuine
+overlapping multitouch delivery rather than two fast sequential taps. Stopping
+Patin left the compositor process and Wayland socket alive.

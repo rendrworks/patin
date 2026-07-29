@@ -1,4 +1,4 @@
-pub const TOGGLE_WIDTH: f64 = 112.0;
+pub const TOGGLE_WIDTH: f64 = 180.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -33,8 +33,8 @@ mod tests {
         let target = toggle_target(32);
 
         assert!(target.contains((0.0, 0.0)));
-        assert!(target.contains((111.99, 31.99)));
-        assert!(!target.contains((112.0, 12.0)));
+        assert!(target.contains((179.99, 31.99)));
+        assert!(!target.contains((180.0, 12.0)));
         assert!(!target.contains((40.0, 32.0)));
         assert!(!target.contains((-0.1, 12.0)));
     }
