@@ -17,3 +17,4 @@
 - [Stage 5b — Toolkit and Example Boundary](stages/stage-5b-toolkit-boundary.md)
 - [Stage 6a — UPower Battery Service Adapter](stages/stage-6a-upower-battery.md)
 - [Stage 6b — Volume and Brightness Service Adapters](stages/stage-6b-volume-brightness.md)
+- [Stage 6c — Network Service Adapter](stages/stage-6c-network.md)

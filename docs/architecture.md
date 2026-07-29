@@ -97,24 +97,30 @@ service integration. Construction is left to each adapter, since opening a
 D-Bus connection or similar can fail in ways only that adapter understands.
 
 Concrete adapters live in their own workspace crates under `crates/`, never
-in `src/`, so their dependencies (`zbus`, and later whatever a network or
-media adapter needs) never reach a consumer that only wants the toolkit.
-Three exist so far, named by domain rather than mechanism except where one
-real service owns the domain outright:
+in `src/`, so their dependencies (`zbus`, and later whatever a media adapter
+needs) never reach a consumer that only wants the toolkit. Four exist so
+far, named by domain rather than mechanism except where one real service
+owns the domain outright:
 
 - `crates/patin-service-upower` polls UPower's `DisplayDevice` — the
   synthetic aggregate battery device UPower maintains for shells — over
   `zbus`'s blocking API.
+- `crates/patin-service-network` polls NetworkManager the same way:
+  `PrimaryConnection`/`PrimaryConnectionType`, plus a short D-Bus walk to an
+  access point's `Strength` for wifi. It reports a real "disconnected"
+  reading (`Some(NetworkSnapshot::Disconnected)`) rather than folding that
+  into `None` — `None` there means only "NetworkManager unreachable",
+  matching how battery's snapshot always carries a real `charging` reading.
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in
   [Status Providers](status-services.md)), so they shell out to
   `wpctl`/`pactl` and read `/sys/class/backlight` respectively.
 
-All three degrade to `None` when their underlying service or file isn't
-reachable, the same failure behavior the demo's status fixtures already had
-before they moved into these crates.
+All four degrade their `Provider::poll` result when their underlying
+service or file isn't reachable, the same failure behavior the demo's
+status fixtures already had before they moved into these crates.
 
-All three adapters are intentionally poll-based, reusing the same
+All four adapters are intentionally poll-based, reusing the same
 `Shell::update` tick the demo already had. A push-only service such as
 notifications will need a way to wake the platform event loop from a
 background thread between ticks; that plumbing does not exist yet and is

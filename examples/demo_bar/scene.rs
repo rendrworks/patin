@@ -43,11 +43,13 @@ pub struct DemoBar {
     battery_bounds: Option<Rect>,
     volume_bounds: Option<Rect>,
     brightness_bounds: Option<Rect>,
+    network_bounds: Option<Rect>,
     clock_bounds: Rect,
     toggle_active: bool,
     battery: Option<String>,
     volume: Option<String>,
     brightness: Option<String>,
+    network: Option<String>,
     clock: String,
     damage: Vec<Rect>,
     status: SystemStatus,
@@ -58,10 +60,11 @@ impl DemoBar {
         let mut status = SystemStatus::new();
         let snapshot = status.poll();
         eprintln!(
-            "demo_bar: status providers: battery={}, volume={}, brightness={}",
+            "demo_bar: status providers: battery={}, volume={}, brightness={}, network={}",
             snapshot.battery.as_deref().unwrap_or("unavailable"),
             snapshot.volume.as_deref().unwrap_or("unavailable"),
-            snapshot.brightness.as_deref().unwrap_or("unavailable")
+            snapshot.brightness.as_deref().unwrap_or("unavailable"),
+            snapshot.network.as_deref().unwrap_or("unavailable")
         );
         let mut bar = Self {
             size: Size::default(),
@@ -70,11 +73,13 @@ impl DemoBar {
             battery_bounds: None,
             volume_bounds: None,
             brightness_bounds: None,
+            network_bounds: None,
             clock_bounds: Rect::default(),
             toggle_active: false,
             battery: snapshot.battery,
             volume: snapshot.volume,
             brightness: snapshot.brightness,
+            network: snapshot.network,
             clock: current_clock(),
             damage: Vec::new(),
             status,
@@ -92,6 +97,9 @@ impl DemoBar {
             lengths.push(Length::Fixed(84.0));
         }
         if self.brightness.is_some() {
+            lengths.push(Length::Fixed(76.0));
+        }
+        if self.network.is_some() {
             lengths.push(Length::Fixed(76.0));
         }
         lengths.push(Length::Fixed(72.0));
@@ -117,6 +125,11 @@ impl DemoBar {
             index += 1;
             bounds
         });
+        self.network_bounds = self.network.as_ref().map(|_| {
+            let bounds = children[index];
+            index += 1;
+            bounds
+        });
         self.clock_bounds = children[index];
     }
 
@@ -125,19 +138,27 @@ impl DemoBar {
         battery: Option<String>,
         volume: Option<String>,
         brightness: Option<String>,
+        network: Option<String>,
     ) -> bool {
-        if self.battery == battery && self.volume == volume && self.brightness == brightness {
+        if self.battery == battery
+            && self.volume == volume
+            && self.brightness == brightness
+            && self.network == network
+        {
             return false;
         }
         let layout_changed = self.battery.is_some() != battery.is_some()
             || self.volume.is_some() != volume.is_some()
-            || self.brightness.is_some() != brightness.is_some();
+            || self.brightness.is_some() != brightness.is_some()
+            || self.network.is_some() != network.is_some();
         let battery_changed = self.battery != battery;
         let volume_changed = self.volume != volume;
         let brightness_changed = self.brightness != brightness;
+        let network_changed = self.network != network;
         self.battery = battery;
         self.volume = volume;
         self.brightness = brightness;
+        self.network = network;
         if layout_changed {
             self.layout();
             self.damage_all();
@@ -149,6 +170,9 @@ impl DemoBar {
                 self.damage.push(bounds);
             }
             if brightness_changed && let Some(bounds) = self.brightness_bounds {
+                self.damage.push(bounds);
+            }
+            if network_changed && let Some(bounds) = self.network_bounds {
                 self.damage.push(bounds);
             }
         }
@@ -180,7 +204,12 @@ impl Shell for DemoBar {
             changed = true;
         }
         let snapshot = self.status.poll();
-        self.set_status(snapshot.battery, snapshot.volume, snapshot.brightness) || changed
+        self.set_status(
+            snapshot.battery,
+            snapshot.volume,
+            snapshot.brightness,
+            snapshot.network,
+        ) || changed
     }
 
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
@@ -234,6 +263,7 @@ impl Shell for DemoBar {
             (self.battery_bounds, self.battery.as_ref()),
             (self.volume_bounds, self.volume.as_ref()),
             (self.brightness_bounds, self.brightness.as_ref()),
+            (self.network_bounds, self.network.as_ref()),
         ] {
             if let (Some(bounds), Some(text)) = (bounds, text) {
                 commands.push(DrawCommand::Text {

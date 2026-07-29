@@ -1,10 +1,10 @@
 # Status Providers
 
-Battery, volume, and brightness are each an optional, opt-in toolkit crate
-implementing `patin::service::Provider` (see
+Battery, volume, brightness, and network are each an optional, opt-in
+toolkit crate implementing `patin::service::Provider` (see
 [Architecture](architecture.md#service-adapters)), not code inside the
 `patin` library or a demo-only fixture. `examples/demo_bar/services.rs`
-composes all three into one `StatusSnapshot` for its row layout — that
+composes all four into one `StatusSnapshot` for its row layout — that
 composition, and the row's dynamic membership/damage behavior, remains the
 demo's own job. A missing provider does not prevent the example from
 starting.
@@ -45,14 +45,32 @@ documented `/sys/class/backlight` ABI directly: it discovers entries, reads
 assume a driver or panel name. A missing or invalid backlight entry returns
 `None`. The display format is `BRI n%`.
 
+## Network
+
+`crates/patin-service-network`'s `NetworkProvider` (see
+[Stage 6c](stages/stage-6c-network.md)) reads NetworkManager over D-Bus —
+`PrimaryConnection` (an object path, `"/"` when there is none) and
+`PrimaryConnectionType`. A wifi primary connection additionally walks
+`ActiveConnection.Devices` → `Device.Wireless.ActiveAccessPoint` →
+`AccessPoint.Strength` for a signal percentage. `Provider::poll` returning
+`None` means only "NetworkManager is unreachable over D-Bus" — being
+reachable but disconnected is a real reading of its own.
+
+Cellular signal detail is out of scope: `ModemManager` is a separate D-Bus
+service with its own object model, so a primary connection type other than
+wifi/wired (including `gsm`/`cdma`) just reports as generically connected.
+
+The display format is `NET 55%` for wifi, `NET ETH` for wired, `NET OFF`
+when disconnected, or `NET UP` for anything else connected.
+
 ## Polling
 
-The demo's `Shell::update` polls all three providers once per platform
+The demo's `Shell::update` polls all four providers once per platform
 update. Unchanged values produce no redraw; changed values damage only
 their component. A provider's snapshot appearing or disappearing changes
 row membership and damages the full bar.
 
-All three adapters are poll-based today, reusing the same once-per-second
+All four adapters are poll-based today, reusing the same once-per-second
 tick. A future push-only service (notifications, media) will need a way to
 wake the platform event loop from a background thread between ticks — that
 plumbing does not exist yet.

@@ -1,0 +1,21 @@
+[package]
+name = "patin-service-network"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Optional network status provider for Patin shells (NetworkManager)"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+patin = { path = "../.." }
+zbus = { version = "=5.18.0", default-features = false, features = [
+    "async-executor",
+    "async-fs",
+    "async-io",
+    "async-lock",
+    "async-process",
+    "async-task",
+    "blocking",
+    "blocking-api",
+] }

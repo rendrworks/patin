@@ -39,6 +39,7 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-service-upower` — battery state over D-Bus/UPower.
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
+- `patin-service-network` — connectivity state over D-Bus/NetworkManager.
 
 A consumer depends on `patin` alone, or additionally on whichever adapter
 crates it wants; none are pulled in automatically.

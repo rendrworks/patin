@@ -4,6 +4,7 @@
 
 use patin::service::Provider;
 use patin_service_brightness::{BacklightProvider, BrightnessSnapshot};
+use patin_service_network::{NetworkProvider, NetworkSnapshot};
 use patin_service_upower::{BatteryProvider, BatterySnapshot};
 use patin_service_volume::{VolumeProvider, VolumeSnapshot};
 
@@ -12,12 +13,14 @@ pub struct StatusSnapshot {
     pub battery: Option<String>,
     pub volume: Option<String>,
     pub brightness: Option<String>,
+    pub network: Option<String>,
 }
 
 pub struct SystemStatus {
     battery: BatteryProvider,
     volume: VolumeProvider,
     brightness: BacklightProvider,
+    network: NetworkProvider,
 }
 
 impl SystemStatus {
@@ -26,6 +29,7 @@ impl SystemStatus {
             battery: BatteryProvider::new(),
             volume: VolumeProvider::new(),
             brightness: BacklightProvider::new(),
+            network: NetworkProvider::new(),
         }
     }
 
@@ -34,6 +38,7 @@ impl SystemStatus {
             battery: self.battery.poll().map(format_battery),
             volume: self.volume.poll().map(format_volume),
             brightness: self.brightness.poll().map(format_brightness),
+            network: self.network.poll().map(format_network),
         }
     }
 }
@@ -56,4 +61,13 @@ fn format_volume(snapshot: VolumeSnapshot) -> String {
 
 fn format_brightness(snapshot: BrightnessSnapshot) -> String {
     format!("BRI {}%", snapshot.percentage)
+}
+
+fn format_network(snapshot: NetworkSnapshot) -> String {
+    match snapshot {
+        NetworkSnapshot::Disconnected => "NET OFF".into(),
+        NetworkSnapshot::Wired => "NET ETH".into(),
+        NetworkSnapshot::Wifi { percentage } => format!("NET {percentage}%"),
+        NetworkSnapshot::Other => "NET UP".into(),
+    }
 }
