@@ -69,25 +69,27 @@ generating negative or overflowing rectangles.
 
 ```text
 Row
-├── Toggle (fixed preference)
 ├── Spacer (weighted fill)
 ├── Optional status fixtures
 └── Clock (fixed preference)
 ```
 
-The example owns component state and styling. Optional battery, volume, and
-brightness fixtures join its row only when their providers return values. It
-emits a small command list and records logical damaged rectangles when state
-changes.
-Resize and scale changes damage the full bar; toggle and clock changes damage
-only their component bounds. The Wayland boundary converts those rectangles to
-outward-rounded physical buffer coordinates.
+The example owns component state and styling. Optional battery, volume,
+brightness, and network fixtures join its row only when their providers
+return values. It emits a small command list and records logical damaged
+rectangles when state changes.
+Resize and scale changes damage the full bar; clock and status-fixture
+changes damage only their component bounds. The Wayland boundary converts
+those rectangles to outward-rounded physical buffer coordinates. The bar has
+no interactive element right now — `Shell::activate_at` is a no-op — so
+pointer and touch presses reach it without visibly changing anything.
 
-Battery, volume, and brightness themselves are toolkit-level provider crates
-(see "Service adapters" below), not example implementation details — only
-their composition into one `StatusSnapshot` in `examples/demo_bar/services.rs`
-is. The Chrono dependency is a genuine example-only detail. None of this is
-exported by `src/lib.rs` or ever constructed by `platform::run`.
+Battery, volume, brightness, and network themselves are toolkit-level
+provider crates (see "Service adapters" below), not example implementation
+details — only their composition into one `StatusSnapshot` in
+`examples/demo_bar/services.rs` is. The Chrono dependency is a genuine
+example-only detail. None of this is exported by `src/lib.rs` or ever
+constructed by `platform::run`.
 
 ## Service adapters
 

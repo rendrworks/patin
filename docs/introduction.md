@@ -17,10 +17,11 @@ The library owns Wayland layer surfaces, scaling, seats, pointer/touch routing,
 shared-memory rendering, logical layout primitives, draw commands, and damage
 submission. It does not instantiate a particular shell composition or service.
 
-Examples are executable fixtures. The demo bar intentionally contains a clock,
-toggle, battery reader, and volume reader so the library can be exercised on
-real systems. Those features are not part of Patin's default behavior and do
-not become required dependencies for consumers.
+Examples are executable fixtures. The demo bar intentionally contains a clock
+and optional battery, volume, brightness, and network status readers so the
+library can be exercised on real systems. Those features are not part of
+Patin's default behavior and do not become required dependencies for
+consumers.
 
 Patin remains a shell-focused toolkit rather than a general-purpose
 application GUI framework, configuration language, or reactive hot-reload

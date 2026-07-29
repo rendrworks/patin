@@ -6,17 +6,10 @@ use patin::{
 
 use super::services::SystemStatus;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Action {
-    Toggle,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct BarStyle {
     background: Color,
     accent: Color,
-    toggle_off: Color,
-    toggle_on: Color,
     text: Color,
     padding: f32,
     gap: f32,
@@ -27,8 +20,6 @@ impl Default for BarStyle {
         Self {
             background: Color(20, 17, 29, 255),
             accent: Color(124, 58, 237, 255),
-            toggle_off: Color(76, 67, 92, 255),
-            toggle_on: Color(22, 163, 74, 255),
             text: Color(245, 243, 255, 255),
             padding: 5.0,
             gap: 8.0,
@@ -39,13 +30,11 @@ impl Default for BarStyle {
 pub struct DemoBar {
     size: Size,
     style: BarStyle,
-    toggle_bounds: Rect,
     battery_bounds: Option<Rect>,
     volume_bounds: Option<Rect>,
     brightness_bounds: Option<Rect>,
     network_bounds: Option<Rect>,
     clock_bounds: Rect,
-    toggle_active: bool,
     battery: Option<String>,
     volume: Option<String>,
     brightness: Option<String>,
@@ -69,13 +58,11 @@ impl DemoBar {
         let mut bar = Self {
             size: Size::default(),
             style: BarStyle::default(),
-            toggle_bounds: Rect::default(),
             battery_bounds: None,
             volume_bounds: None,
             brightness_bounds: None,
             network_bounds: None,
             clock_bounds: Rect::default(),
-            toggle_active: false,
             battery: snapshot.battery,
             volume: snapshot.volume,
             brightness: snapshot.brightness,
@@ -89,7 +76,7 @@ impl DemoBar {
     }
 
     fn layout(&mut self) {
-        let mut lengths = vec![Length::Fixed(180.0), Length::Fill(1.0)];
+        let mut lengths = vec![Length::Fill(1.0)];
         if self.battery.is_some() {
             lengths.push(Length::Fixed(76.0));
         }
@@ -108,8 +95,7 @@ impl DemoBar {
             self.style.gap,
             &lengths,
         );
-        self.toggle_bounds = children[0];
-        let mut index = 2;
+        let mut index = 1;
         self.battery_bounds = self.battery.as_ref().map(|_| {
             let bounds = children[index];
             index += 1;
@@ -178,12 +164,6 @@ impl DemoBar {
         }
         true
     }
-
-    fn action_at(&self, position: (f64, f64)) -> Option<Action> {
-        self.toggle_bounds
-            .contains(position)
-            .then_some(Action::Toggle)
-    }
 }
 
 impl Shell for DemoBar {
@@ -212,17 +192,8 @@ impl Shell for DemoBar {
         ) || changed
     }
 
-    fn activate_at(&mut self, position: (f64, f64)) -> bool {
-        let Some(Action::Toggle) = self.action_at(position) else {
-            return false;
-        };
-        self.toggle_active = !self.toggle_active;
-        self.damage.push(self.toggle_bounds);
-        eprintln!(
-            "demo_bar: toggle state is {}",
-            if self.toggle_active { "on" } else { "off" }
-        );
-        true
+    fn activate_at(&mut self, _position: (f64, f64)) -> bool {
+        false
     }
 
     fn commands(&self) -> Vec<DrawCommand> {
@@ -236,27 +207,6 @@ impl Shell for DemoBar {
             DrawCommand::Fill {
                 bounds: accent,
                 color: self.style.accent,
-            },
-            DrawCommand::Fill {
-                bounds: self.toggle_bounds.inset(self.style.padding),
-                color: if self.toggle_active {
-                    self.style.toggle_on
-                } else {
-                    self.style.toggle_off
-                },
-            },
-            DrawCommand::Text {
-                bounds: self.toggle_bounds.inset(self.style.padding * 2.0),
-                text: if self.toggle_active {
-                    "SHELL ON".into()
-                } else {
-                    "SHELL OFF".into()
-                },
-                color: self.style.text,
-                font_size: 12.0,
-                line_height: 20.0,
-                family: FontFamily::SansSerif,
-                align: TextAlign::Center,
             },
         ];
         for (bounds, text) in [
@@ -310,10 +260,7 @@ fn format_clock(hour: u32, minute: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DemoBar, format_clock};
-    use patin::{
-        platform::Shell,
-        ui::{DrawCommand, Rect, Size},
-    };
+    use patin::{platform::Shell, ui::Size};
 
     #[test]
     fn formats_clock_with_leading_zeroes() {
@@ -322,22 +269,14 @@ mod tests {
     }
 
     #[test]
-    fn demo_hit_testing_and_damage_follow_toggle_bounds() {
+    fn activate_at_has_no_effect_without_interactive_elements() {
         let mut bar = DemoBar::new();
         bar.resize(Size {
             width: 500.0,
             height: 32.0,
         });
         bar.take_damage();
-        assert!(bar.activate_at((20.0, 16.0)));
-        assert!(!bar.activate_at((300.0, 16.0)));
-        let damage = bar.take_damage();
-        assert_eq!(damage.len(), 1);
-        assert_eq!(damage[0].origin, Rect::default().origin);
-        assert!(damage[0].size.width > 0.0);
-        assert_eq!(damage[0].size.height, 32.0);
-        assert!(bar.commands().iter().any(
-            |command| matches!(command, DrawCommand::Text { text, .. } if text == "SHELL ON")
-        ));
+        assert!(!bar.activate_at((20.0, 16.0)));
+        assert!(bar.take_damage().is_empty());
     }
 }
