@@ -13,7 +13,8 @@ Patin is a library organized around narrow shell-toolkit boundaries:
   Patin never constructs one; a consumer depends on and instantiates the
   ones it wants.
 - **Consumers** own components, services, and compositions. The demo bar is one
-  consumer used to verify the library.
+  consumer used to verify the library. `patin-lock` is another consumer and is
+  built/launched independently.
 - **Compositor integration** exposes workspace state and commands through a
   replaceable adapter. Its neutral implementation works without compositor
   IPC; a later 0xin adapter will use the documented control socket.
@@ -56,6 +57,27 @@ distinct across seats.
 The consumer supplies `LayerConfig`: namespace, layer level, anchors, logical
 size, exclusive zone, and keyboard policy. The demo chooses a top exclusive
 bar with keyboard policy `None`; the toolkit does not choose those values.
+
+## Session-lock composition
+
+`crates/patin-lock` uses SCTK's `ext-session-lock-v1` support directly because
+a lock surface has stricter lifecycle rules than an ordinary layer surface.
+It creates one lock surface for every output discovered at runtime and adds or
+removes surfaces as outputs change. All surfaces share one `LockUi` state and
+the toolkit CPU renderer.
+
+Seat capabilities are also discovered dynamically. Physical keyboard, pointer,
+and touch events all feed the same password model and hit-testable QWERTY/symbol
+keyboard. Password storage is bounded and zeroized when cleared or dropped.
+PAM authentication runs on a worker thread so the Wayland event loop continues
+to redraw and service compositor events.
+
+The public process supervises an internal worker. A successful PAM result makes
+the worker send the protocol unlock request and exit successfully. A crash is
+restarted after a delay while the compositor's session-lock protocol remains
+fail-closed; configuration/protocol errors are terminal instead of entering a
+restart loop. This is generic Wayland/PAM behavior and contains no 0xin or FP5
+branch.
 
 ## Internal UI core
 

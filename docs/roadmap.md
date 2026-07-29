@@ -16,9 +16,12 @@ instantiated by the library:
    hit-testing, damage tracking, and reusable components.
 6. **Service adapters** — design optional provider interfaces from demonstrated
    battery, network, audio, notification, and media examples.
-7. **Composition templates** — exercise phone navigation, launchers, quick
+7. **Session lock** — provide an independently launched, multi-output
+   `ext-session-lock-v1` composition with physical/touch password entry and
+   PAM authentication.
+8. **Composition templates** — exercise phone navigation, launchers, quick
    settings, notifications, and keyboard control without making them defaults.
-8. **Compositor integration** — add a replaceable adapter for 0xin workspace
+9. **Compositor integration** — add a replaceable adapter for 0xin workspace
    state and commands.
 
 CPU rendering comes first. A GPU renderer is considered only after measurement

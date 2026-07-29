@@ -21,11 +21,12 @@ cargo run --example demo_bar
 ```
 
 The first surface uses `smithay-client-toolkit` 0.21.1 with default features
-disabled and only its `calloop` feature enabled. SCTK supplies the Wayland
+disabled and its `calloop` and `xkbcommon` features enabled. SCTK supplies the Wayland
 client bindings, layer-shell protocol bindings, shared-memory slot pool,
 surface/output/seat tracking, and Calloop event source. Patin binds pointer and
-touch capabilities through SCTK without enabling its optional keyboard feature;
-the bar deliberately requests no keyboard interactivity.
+touch capabilities through SCTK. The keyboard support is used by the optional
+`patin-lock` consumer; the bar still deliberately requests no keyboard
+interactivity.
 
 The rendering stage adds:
 
@@ -55,6 +56,25 @@ cargo run --example demo_bar
 
 Patin reports a clear error and exits unsuccessfully when no compositor can be
 found or a required global is unavailable.
+
+## Lock-screen requirements
+
+Building `patin-lock` requires the system PAM development package in addition
+to the Rust toolchain (`linux-pam-dev` on postmarketOS/Alpine,
+`pam-devel`/`pam` on other distributions). Runtime requires a compositor that
+advertises `ext-session-lock-v1` and a matching `/etc/pam.d/patin-lock` policy.
+
+```sh
+./scripts/install-lock-user.sh
+sudo install -m 0644 data/pam/patin-lock.alpine /etc/pam.d/patin-lock
+patin-lock
+```
+
+Use the `.arch` or `.debian` example instead on those PAM stacks. PAM policy is
+system security configuration and is therefore never installed implicitly by
+the user installer. The program checks that the policy exists before requesting
+the Wayland lock, avoiding a lock screen with no configured authentication
+route.
 
 ## Remote Wayland session testing
 

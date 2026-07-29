@@ -6,7 +6,8 @@ which a consumer can compose bars, overlays, launchers, lock screens, and
 other shell surfaces.
 
 > **Status:** Patin is a library. The visible demo bar is an example/test
-> consumer and is not instantiated by the toolkit.
+> consumer and is not instantiated by the toolkit. `patin-lock` is a separate,
+> explicitly launched lock-screen composition.
 
 Patin clients can run above [0xin](https://github.com/termworks/0xin) or another
 compatible layer-shell compositor. Patin is focused on graphical-shell needs;
@@ -40,6 +41,8 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
 - `patin-service-network` — connectivity state over D-Bus/NetworkManager.
+- `patin-lock` — an `ext-session-lock-v1` client with physical and touch
+  keyboards and PAM authentication.
 
 A consumer depends on `patin` alone, or additionally on whichever adapter
 crates it wants; none are pulled in automatically.
@@ -68,6 +71,28 @@ act on.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.
+
+### Install and run the lock screen
+
+The lock is security-sensitive, so its binary and PAM policy are separate,
+explicit installation steps. Install the distribution-matching example policy;
+do not copy one for a different PAM stack.
+
+```sh
+./scripts/install-lock-user.sh
+
+# postmarketOS / Alpine
+sudo install -m 0644 data/pam/patin-lock.alpine /etc/pam.d/patin-lock
+
+# Then, from the graphical session:
+patin-lock
+```
+
+Arch and Debian examples are available as `patin-lock.arch` and
+`patin-lock.debian`. The client refuses to acquire the lock when its PAM policy
+is missing. It discovers outputs and seats at runtime, covers every output, and
+accepts a physical keyboard, pointer, or its built-in touch QWERTY/symbol
+keyboard. Successful PAM authentication is the only normal unlock path.
 
 ### Run on the FP5
 
@@ -134,8 +159,10 @@ mdbook serve
 4. Input: pointer and multitouch interaction without stealing application focus.
 5. UI core: internal layout, styling, hit-testing, damage, and components.
 6. Services: battery, network, audio, notifications, and media state.
-7. Mobile profile: phone navigation, launcher, quick settings, and keyboard.
-8. Compositor integration: workspace state and commands through a replaceable
+7. Session lock: standalone multi-output lock composition with touch input and
+   PAM authentication.
+8. Mobile profile: phone navigation, launcher, quick settings, and keyboard.
+9. Compositor integration: workspace state and commands through a replaceable
    0xin control-socket adapter.
 
 Each completed stage records its real verification commands and results in the
