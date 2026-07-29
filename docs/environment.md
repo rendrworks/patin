@@ -22,8 +22,9 @@ cargo build
 The first surface uses `smithay-client-toolkit` 0.21.1 with default features
 disabled and only its `calloop` feature enabled. SCTK supplies the Wayland
 client bindings, layer-shell protocol bindings, shared-memory slot pool,
-surface/output tracking, and Calloop event source. Keyboard support remains
-disabled until the input stage.
+surface/output/seat tracking, and Calloop event source. Patin binds pointer and
+touch capabilities through SCTK without enabling its optional keyboard feature;
+the bar deliberately requests no keyboard interactivity.
 
 The rendering stage adds:
 

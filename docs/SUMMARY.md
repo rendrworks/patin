@@ -11,3 +11,4 @@
 - [Stage 1 — Foundation](stages/stage-1-foundation.md)
 - [Stage 2 — First Surface](stages/stage-2-first-surface.md)
 - [Stage 3 — Scale-aware Rendering](stages/stage-3-rendering.md)
+- [Stage 4 — Pointer and Touch Input](stages/stage-4-input.md)

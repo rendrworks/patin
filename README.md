@@ -4,8 +4,8 @@ Patin is a native Rust graphical shell for Wayland. It will draw its own bars,
 overlays, launcher, lock screen, and optional phone interface as an independent
 layer-shell client.
 
-> **Status:** Milestone 3 renders a scale-aware clock and drawing primitives
-> into the native layer-shell bar.
+> **Status:** Milestone 4 adds a visible bar toggle driven by dynamically
+> discovered pointer and multitouch input.
 
 Patin is the visible surface layer intended to sit above
 [0xin](https://github.com/termworks/0xin), while remaining usable with other
@@ -46,9 +46,11 @@ mdbook build
 `cargo run` connects to the compositor selected by `WAYLAND_DISPLAY`. The
 compositor must support `wlr-layer-shell-unstable-v1`. Patin creates one
 32-logical-pixel bar on the default output, anchors it to the top edge, reserves
-a matching exclusive zone, and draws a right-aligned clock. Fractional scale
-and viewporter protocols are used when available, with integer scaling as the
-fallback.
+a matching exclusive zone, and draws a right-aligned clock plus a `SHELL OFF`
+target. A left click or touch inside the target toggles its state and redraws
+it. Fractional scale and viewporter protocols are used when available, with
+integer scaling as the fallback. Patin never requests keyboard interactivity
+for the bar.
 
 ### Portability
 

@@ -42,6 +42,16 @@ represented in protocol-native 120ths, physical dimensions are rounded upward,
 and `wp_viewport` maps that buffer back to the compositor-provided logical
 surface size.
 
+SCTK's seat state discovers pointer and touch capabilities at runtime. Patin
+creates one protocol object per advertised capability and releases it when the
+capability or seat disappears. Both input paths receive surface-local logical
+coordinates and call the same pure rectangle hit test. Successful activations
+change component state and enter the existing frame-coalesced redraw path.
+Every touch contact is handled independently.
+
+The bar uses layer-shell keyboard interactivity `None`. Clicking or touching it
+therefore does not request keyboard focus from the compositor.
+
 ## Deliberate boundaries
 
 Rendering is kept behind a small internal interface so a GPU backend can be

@@ -12,6 +12,8 @@ const CLOCK_FONT_SIZE: f32 = 15.0;
 const CLOCK_LINE_HEIGHT: f32 = 20.0;
 const HORIZONTAL_PADDING: f32 = 12.0;
 const ACCENT_HEIGHT: f32 = 2.0;
+const TOGGLE_PADDING: f32 = 5.0;
+const TOGGLE_WIDTH: f32 = 112.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Scale(u32);
@@ -66,15 +68,73 @@ impl CpuRenderer {
         height: u32,
         scale: Scale,
         clock: &str,
+        toggle_active: bool,
     ) -> Result<(), &'static str> {
         let mut pixmap = Pixmap::new(width, height).ok_or("invalid render target dimensions")?;
         pixmap.fill(Color::from_rgba8(20, 17, 29, 255));
 
         draw_accent(&mut pixmap, scale);
+        self.draw_toggle(&mut pixmap, scale, toggle_active);
         self.draw_clock(&mut pixmap, scale, clock);
         copy_rgba_to_argb(pixmap.data(), canvas);
 
         Ok(())
+    }
+
+    fn draw_toggle(&mut self, pixmap: &mut Pixmap, scale: Scale, active: bool) {
+        let factor = scale.factor();
+        let padding = TOGGLE_PADDING * factor;
+        let width = TOGGLE_WIDTH * factor;
+        let height = pixmap.height() as f32 - (padding * 2.0);
+        let Some(rect) = Rect::from_xywh(padding, padding, width - padding * 2.0, height) else {
+            return;
+        };
+
+        let mut paint = Paint::default();
+        paint.set_color(if active {
+            Color::from_rgba8(22, 163, 74, 255)
+        } else {
+            Color::from_rgba8(76, 67, 92, 255)
+        });
+        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+
+        let label = if active { "SHELL ON" } else { "SHELL OFF" };
+        let line_height = CLOCK_LINE_HEIGHT * factor;
+        let mut buffer = TextBuffer::new(
+            &mut self.font_system,
+            Metrics::new(12.0 * factor, line_height),
+        );
+        buffer.set_size(Some(width - padding * 4.0), Some(line_height));
+        buffer.set_text(
+            label,
+            &Attrs::new()
+                .family(Family::SansSerif)
+                .weight(Weight::SEMIBOLD),
+            Shaping::Advanced,
+            Some(Align::Center),
+        );
+
+        let x_offset = (padding * 2.0).round() as i32;
+        let y_offset = ((pixmap.height() as f32 - line_height) / 2.0).round() as i32;
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            CLOCK_COLOR,
+            |x, y, width, height, color| {
+                let Some(rect) = Rect::from_xywh(
+                    (x + x_offset) as f32,
+                    (y + y_offset) as f32,
+                    width as f32,
+                    height as f32,
+                ) else {
+                    return;
+                };
+                let (red, green, blue, alpha) = color.as_rgba_tuple();
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(red, green, blue, alpha);
+                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            },
+        );
     }
 
     fn draw_clock(&mut self, pixmap: &mut Pixmap, scale: Scale, clock: &str) {

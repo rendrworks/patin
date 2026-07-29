@@ -1,3 +1,4 @@
+mod input;
 mod render;
 
 use std::{error::Error, process::ExitCode, time::Duration};
@@ -16,7 +17,7 @@ use smithay_client_toolkit::{
         client::{
             Connection, Dispatch, QueueHandle,
             globals::registry_queue_init,
-            protocol::{wl_output, wl_shm, wl_surface},
+            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
         },
         protocols::wp::{
             fractional_scale::v1::client::{
@@ -31,6 +32,11 @@ use smithay_client_toolkit::{
     },
     registry::{ProvidesRegistryState, RegistryState, SimpleGlobal},
     registry_handlers,
+    seat::{
+        Capability, SeatHandler, SeatState,
+        pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
+        touch::TouchHandler,
+    },
     shell::{
         WaylandSurface,
         wlr_layer::{
@@ -41,7 +47,10 @@ use smithay_client_toolkit::{
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
 
-use crate::render::{CpuRenderer, Scale};
+use crate::{
+    input::toggle_target,
+    render::{CpuRenderer, Scale},
+};
 
 const BAR_HEIGHT: u32 = 32;
 const BYTES_PER_PIXEL: usize = 4;
@@ -98,6 +107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let pool = SlotPool::new(BAR_HEIGHT as usize * BYTES_PER_PIXEL, &shm)?;
     let mut patin = Patin {
         registry_state: RegistryState::new(&globals),
+        seat_state: SeatState::new(&globals, &queue_handle),
         output_state: OutputState::new(&globals, &queue_handle),
         shm,
         pool,
@@ -113,6 +123,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         frame_pending: false,
         redraw_requested: false,
         clock: current_clock(),
+        toggle_active: false,
+        pointers: Vec::new(),
+        touches: Vec::new(),
         exit: false,
     };
 
@@ -152,6 +165,7 @@ fn format_clock(hour: u32, minute: u32) -> String {
 
 struct Patin {
     registry_state: RegistryState,
+    seat_state: SeatState,
     output_state: OutputState,
     shm: Shm,
     pool: SlotPool,
@@ -167,6 +181,9 @@ struct Patin {
     frame_pending: bool,
     redraw_requested: bool,
     clock: String,
+    toggle_active: bool,
+    pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
+    touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     exit: bool,
 }
 
@@ -203,6 +220,7 @@ impl Patin {
                 physical_height,
                 self.scale,
                 &self.clock,
+                self.toggle_active,
             )
             .expect("CPU rendering failed");
 
@@ -230,6 +248,18 @@ impl Patin {
              {logical_width}x{logical_height} logical bar ({})",
             self.clock
         );
+    }
+
+    fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
+        let bar_height = self.logical_size.map_or(BAR_HEIGHT, |(_, height)| height);
+        if toggle_target(bar_height).contains(position) {
+            self.toggle_active = !self.toggle_active;
+            eprintln!(
+                "patin: toggle activated; state is {}",
+                if self.toggle_active { "on" } else { "off" }
+            );
+            self.request_redraw(queue_handle);
+        }
     }
 }
 
@@ -391,6 +421,181 @@ impl OutputHandler for Patin {
     }
 }
 
+impl SeatHandler for Patin {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+
+    fn new_seat(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _seat: wl_seat::WlSeat,
+    ) {
+    }
+
+    fn new_capability(
+        &mut self,
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        match capability {
+            Capability::Pointer if !self.pointers.iter().any(|(known, _)| known == &seat) => {
+                match self.seat_state.get_pointer(queue_handle, &seat) {
+                    Ok(pointer) => self.pointers.push((seat, pointer)),
+                    Err(error) => eprintln!("patin: could not create pointer: {error}"),
+                }
+            }
+            Capability::Touch if !self.touches.iter().any(|(known, _)| known == &seat) => {
+                match self.seat_state.get_touch(queue_handle, &seat) {
+                    Ok(touch) => self.touches.push((seat, touch)),
+                    Err(error) => eprintln!("patin: could not create touch input: {error}"),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        match capability {
+            Capability::Pointer => {
+                self.pointers.retain(|(known, pointer)| {
+                    if known == &seat {
+                        pointer.release();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            Capability::Touch => {
+                self.touches.retain(|(known, touch)| {
+                    if known == &seat {
+                        touch.release();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn remove_seat(
+        &mut self,
+        connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+    ) {
+        self.remove_capability(connection, queue_handle, seat.clone(), Capability::Pointer);
+        self.remove_capability(connection, queue_handle, seat, Capability::Touch);
+    }
+}
+
+impl PointerHandler for Patin {
+    fn pointer_frame(
+        &mut self,
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        _pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            if &event.surface != self.layer.wl_surface() {
+                continue;
+            }
+
+            if matches!(
+                event.kind,
+                PointerEventKind::Press {
+                    button: BTN_LEFT,
+                    ..
+                }
+            ) {
+                self.activate_at(queue_handle, event.position);
+            }
+        }
+    }
+}
+
+impl TouchHandler for Patin {
+    fn down(
+        &mut self,
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _serial: u32,
+        _time: u32,
+        surface: wl_surface::WlSurface,
+        _id: i32,
+        position: (f64, f64),
+    ) {
+        if surface == *self.layer.wl_surface() {
+            self.activate_at(queue_handle, position);
+        }
+    }
+
+    fn up(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _serial: u32,
+        _time: u32,
+        _id: i32,
+    ) {
+    }
+
+    fn motion(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _time: u32,
+        _id: i32,
+        _position: (f64, f64),
+    ) {
+    }
+
+    fn shape(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _id: i32,
+        _major: f64,
+        _minor: f64,
+    ) {
+    }
+
+    fn orientation(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _id: i32,
+        _orientation: f64,
+    ) {
+    }
+
+    fn cancel(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+    ) {
+    }
+}
+
 smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpViewporter);
 smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpFractionalScaleManagerV1);
 
@@ -401,7 +606,7 @@ impl ProvidesRegistryState for Patin {
         &mut self.registry_state
     }
 
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
 
 smithay_client_toolkit::delegate_dispatch2!(Patin);
