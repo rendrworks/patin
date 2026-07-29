@@ -2,18 +2,11 @@ use cosmic_text::{
     Align, Attrs, Buffer as TextBuffer, Color as TextColor, Family, FontSystem, Metrics, Shaping,
     SwashCache, Weight,
 };
-use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
+use tiny_skia::{Color, Paint, Pixmap, Rect as SkiaRect, Transform};
+
+use crate::ui::{DrawCommand, FontFamily, Rect, TextAlign};
 
 pub const SCALE_DENOMINATOR: u32 = 120;
-
-const CLOCK_COLOR: TextColor = TextColor::rgb(245, 243, 255);
-
-const CLOCK_FONT_SIZE: f32 = 15.0;
-const CLOCK_LINE_HEIGHT: f32 = 20.0;
-const HORIZONTAL_PADDING: f32 = 12.0;
-const ACCENT_HEIGHT: f32 = 2.0;
-const TOGGLE_PADDING: f32 = 5.0;
-const TOGGLE_WIDTH: f32 = 180.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Scale(u32);
@@ -37,7 +30,7 @@ impl Scale {
         u32::try_from(physical).unwrap_or(u32::MAX)
     }
 
-    fn factor(self) -> f32 {
+    pub fn factor(self) -> f32 {
         self.0 as f32 / SCALE_DENOMINATOR as f32
     }
 }
@@ -67,105 +60,93 @@ impl CpuRenderer {
         width: u32,
         height: u32,
         scale: Scale,
-        clock: &str,
-        toggle_active: bool,
+        commands: &[DrawCommand],
     ) -> Result<(), &'static str> {
         let mut pixmap = Pixmap::new(width, height).ok_or("invalid render target dimensions")?;
-        pixmap.fill(Color::from_rgba8(20, 17, 29, 255));
+        pixmap.fill(Color::TRANSPARENT);
 
-        draw_accent(&mut pixmap, scale);
-        self.draw_toggle(&mut pixmap, scale, toggle_active);
-        self.draw_clock(&mut pixmap, scale, clock);
+        for command in commands {
+            match command {
+                DrawCommand::Fill { bounds, color } => {
+                    let bounds = physical_rect(*bounds, scale);
+                    let Some(rect) = SkiaRect::from_xywh(bounds.0, bounds.1, bounds.2, bounds.3)
+                    else {
+                        continue;
+                    };
+                    let mut paint = Paint::default();
+                    paint.set_color(Color::from_rgba8(color.0, color.1, color.2, color.3));
+                    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                }
+                DrawCommand::Text {
+                    bounds,
+                    text,
+                    color,
+                    font_size,
+                    line_height,
+                    family,
+                    align,
+                } => self.draw_text(
+                    &mut pixmap,
+                    scale,
+                    *bounds,
+                    text,
+                    TextColor::rgba(color.0, color.1, color.2, color.3),
+                    *font_size,
+                    *line_height,
+                    *family,
+                    *align,
+                ),
+            }
+        }
         copy_rgba_to_argb(pixmap.data(), canvas);
 
         Ok(())
     }
 
-    fn draw_toggle(&mut self, pixmap: &mut Pixmap, scale: Scale, active: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text(
+        &mut self,
+        pixmap: &mut Pixmap,
+        scale: Scale,
+        bounds: Rect,
+        text: &str,
+        color: TextColor,
+        font_size: f32,
+        line_height: f32,
+        family: FontFamily,
+        align: TextAlign,
+    ) {
         let factor = scale.factor();
-        let padding = TOGGLE_PADDING * factor;
-        let width = TOGGLE_WIDTH * factor;
-        let height = pixmap.height() as f32 - (padding * 2.0);
-        let Some(rect) = Rect::from_xywh(padding, padding, width - padding * 2.0, height) else {
-            return;
-        };
-
-        let mut paint = Paint::default();
-        paint.set_color(if active {
-            Color::from_rgba8(22, 163, 74, 255)
-        } else {
-            Color::from_rgba8(76, 67, 92, 255)
-        });
-        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-
-        let label = if active { "SHELL ON" } else { "SHELL OFF" };
-        let line_height = CLOCK_LINE_HEIGHT * factor;
+        let physical = physical_rect(bounds, scale);
+        let line_height = line_height * factor;
         let mut buffer = TextBuffer::new(
             &mut self.font_system,
-            Metrics::new(12.0 * factor, line_height),
+            Metrics::new(font_size * factor, line_height),
         );
-        buffer.set_size(Some(width - padding * 4.0), Some(line_height));
+        buffer.set_size(Some(physical.2.max(1.0)), Some(physical.3.max(1.0)));
         buffer.set_text(
-            label,
+            text,
             &Attrs::new()
-                .family(Family::SansSerif)
+                .family(match family {
+                    FontFamily::SansSerif => Family::SansSerif,
+                    FontFamily::Monospace => Family::Monospace,
+                })
                 .weight(Weight::SEMIBOLD),
             Shaping::Advanced,
-            Some(Align::Center),
+            Some(match align {
+                TextAlign::Center => Align::Center,
+                TextAlign::End => Align::End,
+            }),
         );
 
-        let x_offset = (padding * 2.0).round() as i32;
-        let y_offset = ((pixmap.height() as f32 - line_height) / 2.0).round() as i32;
+        let x_offset = physical.0.round() as i32;
+        let y_offset = (physical.1 + (physical.3 - line_height) / 2.0).round() as i32;
         buffer.draw(
             &mut self.font_system,
             &mut self.swash_cache,
-            CLOCK_COLOR,
+            color,
             |x, y, width, height, color| {
-                let Some(rect) = Rect::from_xywh(
-                    (x + x_offset) as f32,
-                    (y + y_offset) as f32,
-                    width as f32,
-                    height as f32,
-                ) else {
-                    return;
-                };
-                let (red, green, blue, alpha) = color.as_rgba_tuple();
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(red, green, blue, alpha);
-                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-            },
-        );
-    }
-
-    fn draw_clock(&mut self, pixmap: &mut Pixmap, scale: Scale, clock: &str) {
-        let factor = scale.factor();
-        let padding = HORIZONTAL_PADDING * factor;
-        let line_height = CLOCK_LINE_HEIGHT * factor;
-        let text_width = (pixmap.width() as f32 - padding * 2.0).max(1.0);
-
-        let mut buffer = TextBuffer::new(
-            &mut self.font_system,
-            Metrics::new(CLOCK_FONT_SIZE * factor, line_height),
-        );
-        buffer.set_size(Some(text_width), Some(line_height));
-        buffer.set_text(
-            clock,
-            &Attrs::new()
-                .family(Family::Monospace)
-                .weight(Weight::SEMIBOLD),
-            Shaping::Advanced,
-            Some(Align::End),
-        );
-
-        let y_offset = ((pixmap.height() as f32 - line_height) / 2.0).round() as i32;
-        let x_offset = padding.round() as i32;
-
-        buffer.draw(
-            &mut self.font_system,
-            &mut self.swash_cache,
-            CLOCK_COLOR,
-            |x, y, width, height, color| {
-                let Some(rect) = Rect::from_xywh(
+                let Some(rect) = SkiaRect::from_xywh(
                     (x + x_offset) as f32,
                     (y + y_offset) as f32,
                     width as f32,
@@ -182,16 +163,14 @@ impl CpuRenderer {
     }
 }
 
-fn draw_accent(pixmap: &mut Pixmap, scale: Scale) {
-    let height = (ACCENT_HEIGHT * scale.factor()).ceil().max(1.0);
-    let y = pixmap.height() as f32 - height;
-    let Some(rect) = Rect::from_xywh(0.0, y, pixmap.width() as f32, height) else {
-        return;
-    };
-
-    let mut paint = Paint::default();
-    paint.set_color(Color::from_rgba8(124, 58, 237, 255));
-    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+fn physical_rect(rect: Rect, scale: Scale) -> (f32, f32, f32, f32) {
+    let factor = scale.factor();
+    (
+        rect.origin.x * factor,
+        rect.origin.y * factor,
+        rect.size.width * factor,
+        rect.size.height * factor,
+    )
 }
 
 fn copy_rgba_to_argb(source: &[u8], destination: &mut [u8]) {

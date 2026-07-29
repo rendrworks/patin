@@ -39,6 +39,10 @@ so this stage does not require linking against the system `libwayland-client`.
 `wp_fractional_scale_manager_v1` and `wp_viewporter` are optional; compositors
 without them use the integer `wl_output` scale path.
 
+The UI core adds no external dependency. Its logical geometry, layout,
+styling, scene commands, hit-testing, and damage tracking are internal Rust
+modules built around demonstrated shell components.
+
 ```sh
 echo "$WAYLAND_DISPLAY"
 cargo run

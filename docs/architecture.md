@@ -32,10 +32,12 @@ bar for redraw; Wayland frame callbacks ensure Patin does not submit another
 frame while one is pending.
 
 `CpuRenderer` owns tiny-skia, the cosmic-text font system, and its glyph cache.
-It receives only a byte canvas, physical dimensions, scale, and component
-content. Wayland protocol objects stay outside the renderer. Tiny-skia produces
-premultiplied RGBA pixels internally, which the renderer converts to
-little-endian Wayland ARGB8888 when copying into `wl_shm`.
+It receives only a byte canvas, physical dimensions, scale, and a list of
+renderer-neutral fill/text commands produced by the UI scene. Layout,
+component state, hit-testing, and style stay outside the renderer. Wayland
+protocol objects also stay outside it. Tiny-skia produces premultiplied RGBA
+pixels internally, which the renderer converts to little-endian Wayland
+ARGB8888 when copying into `wl_shm`.
 
 Logical surface size and physical buffer size are separate. Fractional scale is
 represented in protocol-native 120ths, physical dimensions are rounded upward,
@@ -53,6 +55,29 @@ distinct across seats.
 
 The bar uses layer-shell keyboard interactivity `None`. Clicking or touching it
 therefore does not request keyboard focus from the compositor.
+
+## Internal UI core
+
+Logical `Point`, `Size`, and `Rect` types are shared by layout, hit-testing,
+draw commands, and damage. Row and column distribute fixed and weighted fill
+lengths along one axis; stack assigns the same bounds to layered children.
+When fixed children cannot fit, they shrink proportionally instead of
+generating negative or overflowing rectangles.
+
+`BarScene` is a retained internal component composition:
+
+```text
+Row
+├── Toggle (fixed preference)
+├── Spacer (weighted fill)
+└── Clock (fixed preference)
+```
+
+The scene owns component state and styling. It emits a small command list for
+the current frame and records logical damaged rectangles when state changes.
+Resize and scale changes damage the full bar; toggle and clock changes damage
+only their component bounds. The Wayland boundary converts those rectangles to
+outward-rounded physical buffer coordinates.
 
 ## Deliberate boundaries
 

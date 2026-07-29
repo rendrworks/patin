@@ -1,5 +1,5 @@
-mod input;
 mod render;
+mod ui;
 
 use std::{error::Error, process::ExitCode, time::Duration};
 
@@ -48,8 +48,8 @@ use smithay_client_toolkit::{
 };
 
 use crate::{
-    input::toggle_target,
     render::{CpuRenderer, Scale},
+    ui::{BarScene, Size},
 };
 
 const BAR_HEIGHT: u32 = 32;
@@ -122,8 +122,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         has_fractional_preference: false,
         frame_pending: false,
         redraw_requested: false,
-        clock: current_clock(),
-        toggle_active: false,
+        scene: BarScene::new(current_clock()),
         pointers: Vec::new(),
         touches: Vec::new(),
         active_touches: Vec::new(),
@@ -134,8 +133,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Timer::from_duration(Duration::from_secs(1)),
         |_, _, patin| {
             let clock = current_clock();
-            if clock != patin.clock {
-                patin.clock = clock;
+            if patin.scene.set_clock(clock) {
                 patin.redraw_requested = true;
             }
             TimeoutAction::ToDuration(Duration::from_secs(1))
@@ -181,8 +179,7 @@ struct Patin {
     has_fractional_preference: bool,
     frame_pending: bool,
     redraw_requested: bool,
-    clock: String,
-    toggle_active: bool,
+    scene: BarScene,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     active_touches: Vec<(wl_touch::WlTouch, i32)>,
@@ -215,14 +212,14 @@ impl Patin {
             )
             .expect("shared-memory buffer creation failed");
 
+        let commands = self.scene.commands();
         self.renderer
             .render_bar(
                 canvas,
                 physical_width,
                 physical_height,
                 self.scale,
-                &self.clock,
-                self.toggle_active,
+                &commands,
             )
             .expect("CPU rendering failed");
 
@@ -235,7 +232,15 @@ impl Patin {
             surface.set_buffer_scale(integer_scale);
         }
 
-        surface.damage_buffer(0, 0, physical_width as i32, physical_height as i32);
+        let damage = self.scene.take_damage();
+        for rect in &damage {
+            let factor = self.scale.factor();
+            let x = (rect.origin.x * factor).floor() as i32;
+            let y = (rect.origin.y * factor).floor() as i32;
+            let right = ((rect.origin.x + rect.size.width) * factor).ceil() as i32;
+            let bottom = ((rect.origin.y + rect.size.height) * factor).ceil() as i32;
+            surface.damage_buffer(x, y, (right - x).max(1), (bottom - y).max(1));
+        }
         surface.frame(queue_handle, FrameCallbackData(surface.clone()));
         buffer
             .attach_to(surface)
@@ -247,18 +252,22 @@ impl Patin {
 
         eprintln!(
             "patin: rendered {physical_width}x{physical_height} buffer for \
-             {logical_width}x{logical_height} logical bar ({})",
-            self.clock
+             {logical_width}x{logical_height} logical bar ({} damaged region{})",
+            damage.len(),
+            if damage.len() == 1 { "" } else { "s" }
         );
     }
 
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
-        let bar_height = self.logical_size.map_or(BAR_HEIGHT, |(_, height)| height);
-        if toggle_target(bar_height).contains(position) {
-            self.toggle_active = !self.toggle_active;
+        if let Some(action) = self.scene.hit_test(position) {
+            self.scene.activate(action);
             eprintln!(
                 "patin: toggle activated; state is {}",
-                if self.toggle_active { "on" } else { "off" }
+                if self.scene.toggle_active() {
+                    "on"
+                } else {
+                    "off"
+                }
             );
             self.request_redraw(queue_handle);
         }
@@ -289,6 +298,10 @@ impl LayerShellHandler for Patin {
         );
         if self.logical_size != Some(size) {
             self.logical_size = Some(size);
+            self.scene.resize(Size {
+                width: size.0 as f32,
+                height: size.1 as f32,
+            });
             self.request_redraw(queue_handle);
         }
     }
@@ -309,6 +322,7 @@ impl CompositorHandler for Patin {
         let scale = Scale::from_integer(new_factor);
         if self.scale != scale {
             self.scale = scale;
+            self.scene.damage_all();
             self.request_redraw(queue_handle);
         }
     }
@@ -368,6 +382,7 @@ impl Dispatch<WpFractionalScaleV1, ()> for Patin {
             state.has_fractional_preference = true;
             if state.scale != scale {
                 state.scale = scale;
+                state.scene.damage_all();
                 state.request_redraw(queue_handle);
             }
         }
