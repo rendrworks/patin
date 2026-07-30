@@ -19,3 +19,4 @@
 - [Stage 6b — Volume and Brightness Service Adapters](stages/stage-6b-volume-brightness.md)
 - [Stage 6c — Network Service Adapter](stages/stage-6c-network.md)
 - [Stage 7 — Session Lock](stages/stage-7-session-lock.md)
+- [Stage 7b — Selectable Keypad and Idle Blank/Wake](stages/stage-7b-keypad-and-blank.md)

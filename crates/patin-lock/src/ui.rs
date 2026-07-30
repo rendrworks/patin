@@ -20,22 +20,30 @@ enum Page {
     Symbols,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyboardMode {
+    Full,
+    Numeric,
+}
+
 pub struct LockUi {
     pub password: Zeroizing<String>,
     pub verifying: bool,
     pub message: String,
     shift: bool,
     page: Page,
+    mode: KeyboardMode,
 }
 
 impl LockUi {
-    pub fn new() -> Self {
+    pub fn new(mode: KeyboardMode) -> Self {
         Self {
             password: Zeroizing::new(String::new()),
             verifying: false,
             message: "Enter password".into(),
             shift: false,
             page: Page::Letters,
+            mode,
         }
     }
 
@@ -89,7 +97,7 @@ impl LockUi {
     }
 
     pub fn key_at(&self, width: f32, height: f32, position: (f64, f64)) -> Option<Key> {
-        keyboard(self.page, self.shift, width, height)
+        keyboard(self.mode, self.page, self.shift, width, height)
             .into_iter()
             .find_map(|(bounds, _, key)| bounds.contains(position).then_some(key))
     }
@@ -127,7 +135,14 @@ impl LockUi {
                 Color(200, 190, 218, 255),
             ),
         ];
-        for (bounds, label, _) in keyboard_at(self.page, self.shift, width, height, keyboard_top) {
+        for (bounds, label, _) in keyboard_at(
+            self.mode,
+            self.page,
+            self.shift,
+            width,
+            height,
+            keyboard_top,
+        ) {
             commands.push(fill(bounds.inset(3.0), Color(55, 47, 72, 255)));
             commands.push(text(
                 bounds.inset(5.0),
@@ -140,12 +155,76 @@ impl LockUi {
     }
 }
 
-fn keyboard(page: Page, shift: bool, width: f32, height: f32) -> Vec<(Rect, String, Key)> {
+fn keyboard(
+    mode: KeyboardMode,
+    page: Page,
+    shift: bool,
+    width: f32,
+    height: f32,
+) -> Vec<(Rect, String, Key)> {
     let top = (height * 0.54).max(360.0).min(height - 260.0);
-    keyboard_at(page, shift, width, height, top)
+    keyboard_at(mode, page, shift, width, height, top)
 }
 
 fn keyboard_at(
+    mode: KeyboardMode,
+    page: Page,
+    shift: bool,
+    width: f32,
+    height: f32,
+    top: f32,
+) -> Vec<(Rect, String, Key)> {
+    match mode {
+        KeyboardMode::Full => keyboard_at_full(page, shift, width, height, top),
+        KeyboardMode::Numeric => keyboard_at_numeric(width, height, top),
+    }
+}
+
+fn keyboard_at_numeric(width: f32, height: f32, top: f32) -> Vec<(Rect, String, Key)> {
+    let gap = 3.0;
+    let row_height = ((height - top - 12.0) / 4.0).max(44.0);
+    let key_width = width / 3.0;
+    let rows: [[(&str, Key); 3]; 4] = [
+        [
+            ("1", Key::Character('1')),
+            ("2", Key::Character('2')),
+            ("3", Key::Character('3')),
+        ],
+        [
+            ("4", Key::Character('4')),
+            ("5", Key::Character('5')),
+            ("6", Key::Character('6')),
+        ],
+        [
+            ("7", Key::Character('7')),
+            ("8", Key::Character('8')),
+            ("9", Key::Character('9')),
+        ],
+        [
+            ("⌫", Key::Backspace),
+            ("0", Key::Character('0')),
+            ("enter", Key::Enter),
+        ],
+    ];
+    let mut keys = Vec::new();
+    for (row_index, row) in rows.into_iter().enumerate() {
+        for (column_index, (label, key)) in row.into_iter().enumerate() {
+            keys.push((
+                Rect::new(
+                    column_index as f32 * key_width + gap,
+                    top + row_index as f32 * row_height,
+                    key_width - gap * 2.0,
+                    row_height,
+                ),
+                label.into(),
+                key,
+            ));
+        }
+    }
+    keys
+}
+
+fn keyboard_at_full(
     page: Page,
     shift: bool,
     width: f32,
@@ -239,11 +318,11 @@ fn current_time() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Key, LockUi, MAX_PASSWORD_BYTES};
+    use super::{Key, KeyboardMode, LockUi, MAX_PASSWORD_BYTES};
 
     #[test]
     fn password_is_masked_and_bounded() {
-        let mut ui = LockUi::new();
+        let mut ui = LockUi::new(KeyboardMode::Full);
         for _ in 0..(MAX_PASSWORD_BYTES + 20) {
             ui.press(Key::Character('a'));
         }
@@ -253,11 +332,33 @@ mod tests {
 
     #[test]
     fn submitting_moves_and_clears_the_ui_secret() {
-        let mut ui = LockUi::new();
+        let mut ui = LockUi::new(KeyboardMode::Full);
         ui.press(Key::Character('s'));
         let password = ui.take_password().unwrap();
         assert_eq!(password.as_str(), "s");
         assert!(ui.password.is_empty());
         assert!(ui.verifying);
+    }
+
+    #[test]
+    fn numeric_mode_only_exposes_digits_and_no_page_toggle() {
+        let ui = LockUi::new(KeyboardMode::Numeric);
+        let keys: Vec<Key> = super::keyboard(
+            KeyboardMode::Numeric,
+            super::Page::Letters,
+            false,
+            400.0,
+            800.0,
+        )
+        .into_iter()
+        .map(|(_, _, key)| key)
+        .collect();
+        assert!(!keys.contains(&Key::Shift));
+        assert!(!keys.contains(&Key::Symbols));
+        assert!(keys.contains(&Key::Character('5')));
+        let position = ui
+            .key_at(400.0, 800.0, (10.0, 750.0))
+            .expect("bottom-left cell of the numeric grid should hit a key");
+        assert_eq!(position, Key::Backspace);
     }
 }

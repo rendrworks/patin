@@ -67,10 +67,35 @@ removes surfaces as outputs change. All surfaces share one `LockUi` state and
 the toolkit CPU renderer.
 
 Seat capabilities are also discovered dynamically. Physical keyboard, pointer,
-and touch events all feed the same password model and hit-testable QWERTY/symbol
-keyboard. Password storage is bounded and zeroized when cleared or dropped.
-PAM authentication runs on a worker thread so the Wayland event loop continues
-to redraw and service compositor events.
+and touch events all feed the same password model and hit-testable keyboard,
+which is either the QWERTY/symbol layout or a numeric PIN grid depending on
+`--keypad=full|numeric` (default `full`, `PATIN_LOCK_KEYPAD` sets the default
+without passing the flag, and an explicit flag always wins). Password storage
+is bounded and zeroized when cleared or dropped. PAM authentication runs on a
+worker thread so the Wayland event loop continues to redraw and service
+compositor events.
+
+If the compositor advertises `zwlr_output_power_manager_v1`, `patin-lock`
+binds it and requests every output be powered off and stops drawing after a
+period without a real key/touch/pointer press — 1 second before the display
+has ever been woken, 5 seconds from the moment of any wake onward (reset by
+each keystroke, same as the 1-second case), so a pause between digits doesn't
+blank the screen mid-entry. Otherwise this is skipped and the lock behaves as
+it always has. Ordinary
+touch, pointer, and keyboard
+input are ignored while blanked rather than treated as a wake, since a phone
+in a pocket brushes its screen constantly.
+
+Two independent triggers toggle the blank state (off if on, on if off,
+responding within one event-loop iteration): a `SIGUSR1` sent to the
+`--worker` process, useful for scripted/SSH testing; and the physical power
+button (`XF86PowerOff`), handled directly as an ordinary keyboard event in
+`press_key`. The latter needs no compositor keybind — while a session is
+locked, a spec-compliant compositor forwards physical keys straight to the
+lock client instead of consuming them for its own keybinds (0xin's own
+`handle_keybinding` does this via a `server.locked` check specifically so its
+keybinds can't be used to bypass a lock), so `patin-lock` already receives
+`XF86PowerOff` as ordinary input while locked and can act on it itself.
 
 The public process supervises an internal worker. A successful PAM result makes
 the worker send the protocol unlock request and exit successfully. A crash is

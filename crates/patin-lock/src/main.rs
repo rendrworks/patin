@@ -5,14 +5,21 @@ use auth::{AuthResult, authenticate, effective_username};
 use patin::render::{CpuRenderer, Scale};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     reexports::{
         calloop::EventLoop,
         calloop_wayland_source::WaylandSource,
         client::{
-            Connection, QueueHandle,
+            Connection, Proxy, QueueHandle,
             globals::registry_queue_init,
             protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
+        },
+        protocols_wlr::output_power_management::v1::client::{
+            zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1,
+            zwlr_output_power_v1::{
+                Event as OutputPowerEvent, Mode as OutputPowerMode, ZwlrOutputPowerV1,
+            },
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -33,12 +40,63 @@ use std::{
     error::Error,
     path::Path,
     process::{Command, ExitCode},
+    sync::atomic::{AtomicBool, Ordering},
     sync::mpsc::{Receiver, Sender, channel},
-    time::Duration,
+    time::{Duration, Instant},
 };
-use ui::{Key, LockUi};
+use ui::{Key, KeyboardMode, LockUi};
 
 const BYTES_PER_PIXEL: usize = 4;
+const IDLE_BLANK_TIMEOUT: Duration = Duration::from_secs(1);
+const IDLE_BLANK_TIMEOUT_ENTERING: Duration = Duration::from_secs(5);
+
+static POWER_BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn handle_power_button_signal(_signal: libc::c_int) {
+    POWER_BUTTON_PRESSED.store(true, Ordering::SeqCst);
+}
+
+struct OutputPowerManagerData;
+
+impl Dispatch2<ZwlrOutputPowerManagerV1, App> for OutputPowerManagerData {
+    fn event(
+        &self,
+        _state: &mut App,
+        _proxy: &ZwlrOutputPowerManagerV1,
+        _event: <ZwlrOutputPowerManagerV1 as Proxy>::Event,
+        _conn: &Connection,
+        _qh: &QueueHandle<App>,
+    ) {
+    }
+}
+
+struct OutputPowerData;
+
+impl Dispatch2<ZwlrOutputPowerV1, App> for OutputPowerData {
+    fn event(
+        &self,
+        state: &mut App,
+        proxy: &ZwlrOutputPowerV1,
+        event: OutputPowerEvent,
+        _conn: &Connection,
+        _qh: &QueueHandle<App>,
+    ) {
+        match event {
+            OutputPowerEvent::Mode { mode } => {
+                eprintln!("patin-lock: output power mode changed to {mode:?}");
+            }
+            OutputPowerEvent::Failed => {
+                if let Some(index) = state.view_for_power(proxy) {
+                    eprintln!(
+                        "patin-lock: output power control for output {index} is no longer valid"
+                    );
+                    state.views[index].power = None;
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 struct View {
     output: wl_output::WlOutput,
@@ -48,6 +106,7 @@ struct View {
     scale: Scale,
     frame_pending: bool,
     redraw: bool,
+    power: Option<ZwlrOutputPowerV1>,
 }
 
 struct App {
@@ -69,6 +128,10 @@ struct App {
     auth_rx: Receiver<AuthResult>,
     exit: bool,
     unlocked: bool,
+    output_power_manager: Option<ZwlrOutputPowerManagerV1>,
+    last_activity: Instant,
+    blanked: bool,
+    ever_woken: bool,
 }
 
 fn main() -> ExitCode {
@@ -93,8 +156,14 @@ fn main() -> ExitCode {
 
 fn supervise() -> Result<(), Box<dyn Error>> {
     let executable = std::env::current_exe()?;
+    let keypad_arg = std::env::args().find(|argument| argument.starts_with("--keypad="));
     loop {
-        let status = Command::new(&executable).arg("--worker").status()?;
+        let mut command = Command::new(&executable);
+        command.arg("--worker");
+        if let Some(keypad_arg) = &keypad_arg {
+            command.arg(keypad_arg);
+        }
+        let status = command.status()?;
         match status.code() {
             Some(0) => return Ok(()),
             Some(2) => return Err("lock worker stopped because of a terminal error".into()),
@@ -123,6 +192,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn keyboard_mode_from_args() -> KeyboardMode {
+    let value = std::env::args()
+        .find_map(|argument| argument.strip_prefix("--keypad=").map(str::to_string))
+        .or_else(|| std::env::var("PATIN_LOCK_KEYPAD").ok());
+    match value {
+        Some(value) if value == "numeric" => KeyboardMode::Numeric,
+        Some(value) if value == "full" => KeyboardMode::Full,
+        Some(value) => {
+            eprintln!("patin-lock: unrecognized --keypad value {value:?}; using full keyboard");
+            KeyboardMode::Full
+        }
+        None => KeyboardMode::Full,
+    }
+}
+
 fn run_lock() -> Result<(), Box<dyn Error>> {
     let username = effective_username()?;
     if !Path::new("/etc/pam.d/patin-lock").is_file() {
@@ -144,6 +228,19 @@ fn run_lock() -> Result<(), Box<dyn Error>> {
     let lock = lock_state
         .lock(&queue_handle)
         .map_err(|error| format!("compositor does not support session lock: {error}"))?;
+    let output_power_manager = match globals.bind::<ZwlrOutputPowerManagerV1, App, _>(
+        &queue_handle,
+        1..=1,
+        OutputPowerManagerData,
+    ) {
+        Ok(manager) => Some(manager),
+        Err(error) => {
+            eprintln!(
+                "patin-lock: compositor does not support output power management ({error}); the screen will not blank while locked"
+            );
+            None
+        }
+    };
     let (auth_tx, auth_rx) = channel();
     let mut app = App {
         connection,
@@ -158,21 +255,37 @@ fn run_lock() -> Result<(), Box<dyn Error>> {
         pointers: Vec::new(),
         touches: Vec::new(),
         renderer: CpuRenderer::new(),
-        ui: LockUi::new(),
+        ui: LockUi::new(keyboard_mode_from_args()),
         username,
         auth_tx,
         auth_rx,
         exit: false,
         unlocked: false,
+        output_power_manager,
+        last_activity: Instant::now(),
+        blanked: false,
+        ever_woken: false,
     };
     let outputs: Vec<_> = app.output_state.outputs().collect();
     for output in outputs {
         app.add_output(output, &queue_handle)?;
     }
 
+    unsafe {
+        libc::signal(
+            libc::SIGUSR1,
+            handle_power_button_signal as *const () as libc::sighandler_t,
+        );
+    }
+
     while !app.exit {
         event_loop.dispatch(Some(Duration::from_millis(50)), &mut app)?;
         app.poll_auth();
+        if POWER_BUTTON_PRESSED.swap(false, Ordering::SeqCst) {
+            let blanked = app.blanked;
+            app.set_blanked(!blanked);
+        }
+        app.check_idle();
         app.draw_pending(&queue_handle);
     }
     if app.unlocked {
@@ -197,6 +310,10 @@ impl App {
             .as_ref()
             .ok_or("lock disappeared")?
             .create_lock_surface(surface, &output, queue_handle);
+        let power = self
+            .output_power_manager
+            .as_ref()
+            .map(|manager| manager.get_output_power(&output, queue_handle, OutputPowerData));
         self.views.push(View {
             output,
             lock_surface,
@@ -205,6 +322,7 @@ impl App {
             scale: Scale::ONE,
             frame_pending: false,
             redraw: true,
+            power,
         });
         Ok(())
     }
@@ -215,13 +333,61 @@ impl App {
             .position(|view| view.lock_surface.wl_surface() == surface)
     }
 
+    fn view_for_power(&self, power: &ZwlrOutputPowerV1) -> Option<usize> {
+        self.views
+            .iter()
+            .position(|view| view.power.as_ref() == Some(power))
+    }
+
     fn redraw_all(&mut self) {
         for view in &mut self.views {
             view.redraw = true;
         }
     }
 
+    fn set_blanked(&mut self, blanked: bool) {
+        if self.blanked == blanked {
+            return;
+        }
+        self.blanked = blanked;
+        for view in &self.views {
+            if let Some(power) = &view.power {
+                power.set_mode(if blanked {
+                    OutputPowerMode::Off
+                } else {
+                    OutputPowerMode::On
+                });
+            }
+        }
+        if blanked {
+            eprintln!("patin-lock: blanking the display");
+        } else {
+            eprintln!("patin-lock: waking the display");
+            self.ever_woken = true;
+            self.last_activity = Instant::now();
+            self.redraw_all();
+        }
+    }
+
+    fn check_idle(&mut self) {
+        if self.blanked {
+            return;
+        }
+        let timeout = if self.ever_woken {
+            IDLE_BLANK_TIMEOUT_ENTERING
+        } else {
+            IDLE_BLANK_TIMEOUT
+        };
+        if self.last_activity.elapsed() >= timeout {
+            self.set_blanked(true);
+        }
+    }
+
     fn press(&mut self, key: Key) {
+        if self.blanked {
+            return;
+        }
+        self.last_activity = Instant::now();
         if key == Key::Enter {
             if let Some(password) = self.ui.take_password() {
                 authenticate(self.username.clone(), password, self.auth_tx.clone());
@@ -253,6 +419,9 @@ impl App {
     }
 
     fn draw_pending(&mut self, queue_handle: &QueueHandle<Self>) {
+        if self.blanked {
+            return;
+        }
         for index in 0..self.views.len() {
             if self.views[index].redraw && !self.views[index].frame_pending {
                 self.draw(index, queue_handle);
@@ -505,7 +674,14 @@ impl KeyboardHandler for App {
         _: u32,
         event: KeyEvent,
     ) {
-        if event.keysym == Keysym::BackSpace {
+        if event.keysym == Keysym::XF86_PowerOff {
+            // The compositor forwards every key straight to the locked
+            // client instead of running its own keybinds while locked (a
+            // deliberate anti-bypass choice), so the power button has to be
+            // handled here rather than via an external signal while locked.
+            let blanked = self.blanked;
+            self.set_blanked(!blanked);
+        } else if event.keysym == Keysym::BackSpace {
             self.press(Key::Backspace);
         } else if event.keysym == Keysym::Return || event.keysym == Keysym::KP_Enter {
             self.press(Key::Enter);

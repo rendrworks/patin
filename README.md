@@ -91,8 +91,41 @@ patin-lock
 Arch and Debian examples are available as `patin-lock.arch` and
 `patin-lock.debian`. The client refuses to acquire the lock when its PAM policy
 is missing. It discovers outputs and seats at runtime, covers every output, and
-accepts a physical keyboard, pointer, or its built-in touch QWERTY/symbol
-keyboard. Successful PAM authentication is the only normal unlock path.
+accepts a physical keyboard, pointer, or its built-in touch keyboard.
+Successful PAM authentication is the only normal unlock path.
+
+By default the touch keyboard is the full QWERTY/symbol layout. Pass
+`--keypad=numeric` for a 3x4 digit PIN pad instead — useful when the account's
+real password is itself numeric, since either mode just types into the same
+password PAM checks:
+
+```sh
+patin-lock --keypad=numeric
+```
+
+Set `PATIN_LOCK_KEYPAD=numeric` (matching the existing `PATIN_TRACE`
+convention) to make that the default without passing the flag every time —
+export it from a shell profile for manual launches, or set it directly in
+whatever spawns `patin-lock` (a compositor keybind, a session unit) so it
+applies there too. An explicit `--keypad=` argument always overrides it.
+
+If the compositor supports `zwlr_output_power_manager_v1`, the lock screen
+also powers off the display after 1 second of no key/touch/pointer activity —
+or 5 seconds once you've started typing a password, so pauses between digits
+don't blank the screen mid-entry. Ordinary touch/pointer/keyboard input never
+wakes it — only the power button
+(`XF86PowerOff`) does, toggling the display off if it's on or back on if it's
+off. This is deliberate: a phone in a pocket brushes its screen constantly,
+and waking on any of that would defeat the point of blanking it.
+
+No compositor keybind is needed for the power button: while a session is
+locked, a spec-compliant compositor forwards physical keys straight to the
+lock client rather than intercepting them for its own keybinds (0xin does
+this explicitly to keep its keybinds from bypassing the lock), so
+`patin-lock` sees `XF86PowerOff` as an ordinary keyboard event and handles it
+itself. `SIGUSR1` sent to the `--worker` process does the same toggle and
+remains useful for scripted testing (e.g. over SSH), but isn't required for
+the physical button to work.
 
 ### Run on the FP5
 
