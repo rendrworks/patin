@@ -26,6 +26,15 @@ unchanged stage 7 keyboard. Both modes feed the same
 password is, so a numeric keypad only makes sense for accounts whose password
 is itself a PIN.
 
+The numeric grid's keys are noticeably smaller than the first version, with
+real gaps between them (including outer left/right margins) instead of a
+thin shared inset, computed from `patin::ui::DrawCommand::RoundedFill` — a
+small addition to the core toolkit alongside the existing plain `Fill`,
+since key-like backgrounds reasonably want rounded corners and no rounded-rect
+primitive existed before this. The QWERTY/symbol keyboard picks up the same
+rounded corners for free since both keyboards share the same key-drawing loop
+in `LockUi::commands`; only the numeric grid's cell sizing changed.
+
 ## Idle blank and power-button wake
 
 `patin-lock` binds `zwlr_output_power_manager_v1` if the compositor

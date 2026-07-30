@@ -2,7 +2,7 @@ use cosmic_text::{
     Align, Attrs, Buffer as TextBuffer, Color as TextColor, Family, FontSystem, Metrics, Shaping,
     SwashCache, Weight,
 };
-use tiny_skia::{Color, Paint, Pixmap, Rect as SkiaRect, Transform};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect as SkiaRect, Transform};
 
 use crate::ui::{DrawCommand, FontFamily, Rect, TextAlign};
 
@@ -82,6 +82,26 @@ impl CpuRenderer {
                     let mut paint = Paint::default();
                     paint.set_color(Color::from_rgba8(color.0, color.1, color.2, color.3));
                     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                }
+                DrawCommand::RoundedFill {
+                    bounds,
+                    color,
+                    radius,
+                } => {
+                    let bounds = physical_rect(*bounds, scale);
+                    let Some(path) = rounded_rect_path(bounds, *radius * scale.factor()) else {
+                        continue;
+                    };
+                    let mut paint = Paint::default();
+                    paint.set_color(Color::from_rgba8(color.0, color.1, color.2, color.3));
+                    paint.anti_alias = true;
+                    pixmap.fill_path(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
                 }
                 DrawCommand::Text {
                     bounds,
@@ -167,6 +187,51 @@ impl CpuRenderer {
             },
         );
     }
+}
+
+/// Cubic-bezier approximation constant for a quarter circle (4/3 * (sqrt(2) - 1)).
+const CIRCLE_KAPPA: f32 = 0.552_284_8;
+
+fn rounded_rect_path(bounds: (f32, f32, f32, f32), radius: f32) -> Option<tiny_skia::Path> {
+    let (x, y, width, height) = bounds;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let radius = radius.max(0.0).min(width.min(height) / 2.0);
+    let k = radius * CIRCLE_KAPPA;
+    let mut path = PathBuilder::new();
+    path.move_to(x + radius, y);
+    path.line_to(x + width - radius, y);
+    path.cubic_to(
+        x + width - radius + k,
+        y,
+        x + width,
+        y + radius - k,
+        x + width,
+        y + radius,
+    );
+    path.line_to(x + width, y + height - radius);
+    path.cubic_to(
+        x + width,
+        y + height - radius + k,
+        x + width - radius + k,
+        y + height,
+        x + width - radius,
+        y + height,
+    );
+    path.line_to(x + radius, y + height);
+    path.cubic_to(
+        x + radius - k,
+        y + height,
+        x,
+        y + height - radius + k,
+        x,
+        y + height - radius,
+    );
+    path.line_to(x, y + radius);
+    path.cubic_to(x, y + radius - k, x + radius - k, y, x + radius, y);
+    path.close();
+    path.finish()
 }
 
 fn physical_rect(rect: Rect, scale: Scale) -> (f32, f32, f32, f32) {

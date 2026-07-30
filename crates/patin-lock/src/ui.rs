@@ -143,7 +143,11 @@ impl LockUi {
             height,
             keyboard_top,
         ) {
-            commands.push(fill(bounds.inset(3.0), Color(55, 47, 72, 255)));
+            commands.push(rounded_fill(
+                bounds.inset(3.0),
+                Color(55, 47, 72, 255),
+                10.0,
+            ));
             commands.push(text(
                 bounds.inset(5.0),
                 &label,
@@ -181,9 +185,12 @@ fn keyboard_at(
 }
 
 fn keyboard_at_numeric(width: f32, height: f32, top: f32) -> Vec<(Rect, String, Key)> {
-    let gap = 3.0;
-    let row_height = ((height - top - 12.0) / 4.0).max(44.0);
-    let key_width = width / 3.0;
+    const ROWS: f32 = 4.0;
+    const COLUMNS: f32 = 3.0;
+    let gap = 14.0;
+    let available_height = height - top - 12.0;
+    let row_height = ((available_height - gap * (ROWS - 1.0)) / ROWS).max(36.0);
+    let key_width = ((width - gap * (COLUMNS + 1.0)) / COLUMNS).max(36.0);
     let rows: [[(&str, Key); 3]; 4] = [
         [
             ("1", Key::Character('1')),
@@ -211,9 +218,9 @@ fn keyboard_at_numeric(width: f32, height: f32, top: f32) -> Vec<(Rect, String, 
         for (column_index, (label, key)) in row.into_iter().enumerate() {
             keys.push((
                 Rect::new(
-                    column_index as f32 * key_width + gap,
-                    top + row_index as f32 * row_height,
-                    key_width - gap * 2.0,
+                    gap + column_index as f32 * (key_width + gap),
+                    top + row_index as f32 * (row_height + gap),
+                    key_width,
                     row_height,
                 ),
                 label.into(),
@@ -299,6 +306,14 @@ fn fill(bounds: Rect, color: Color) -> DrawCommand {
     DrawCommand::Fill { bounds, color }
 }
 
+fn rounded_fill(bounds: Rect, color: Color, radius: f32) -> DrawCommand {
+    DrawCommand::RoundedFill {
+        bounds,
+        color,
+        radius,
+    }
+}
+
 fn text(bounds: Rect, value: &str, font_size: f32, color: Color) -> DrawCommand {
     DrawCommand::Text {
         bounds,
@@ -357,7 +372,7 @@ mod tests {
         assert!(!keys.contains(&Key::Symbols));
         assert!(keys.contains(&Key::Character('5')));
         let position = ui
-            .key_at(400.0, 800.0, (10.0, 750.0))
+            .key_at(400.0, 800.0, (70.0, 750.0))
             .expect("bottom-left cell of the numeric grid should hit a key");
         assert_eq!(position, Key::Backspace);
     }

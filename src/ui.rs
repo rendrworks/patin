@@ -144,6 +144,11 @@ pub enum DrawCommand {
         bounds: Rect,
         color: Color,
     },
+    RoundedFill {
+        bounds: Rect,
+        color: Color,
+        radius: f32,
+    },
     Text {
         bounds: Rect,
         text: String,

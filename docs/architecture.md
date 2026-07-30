@@ -112,6 +112,14 @@ lengths along one axis; stack assigns the same bounds to layered children.
 When fixed children cannot fit, they shrink proportionally instead of
 generating negative or overflowing rectangles.
 
+`DrawCommand::RoundedFill { bounds, color, radius }` sits alongside the plain
+`Fill` variant for consumers that want rounded corners (button-like elements,
+key backgrounds). `CpuRenderer` builds the rounded rectangle as a `tiny-skia`
+path from four cubic-bezier corners rather than relying on a library-provided
+rounded-rect helper, since `tiny-skia` 0.12 doesn't have one; the radius is
+clamped to half the smaller side so it degrades to a normal rectangle instead
+of self-intersecting on very small or very radius-heavy bounds.
+
 `examples/demo_bar/scene.rs` is a retained test composition:
 
 ```text
