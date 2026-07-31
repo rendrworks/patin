@@ -141,6 +141,12 @@ pub enum FontFamily {
     Monospace,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontWeight {
+    Normal,
+    Semibold,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum DrawCommand {
     Fill {
@@ -165,6 +171,7 @@ pub enum DrawCommand {
         font_size: f32,
         line_height: f32,
         family: FontFamily,
+        weight: FontWeight,
         align: TextAlign,
     },
 }

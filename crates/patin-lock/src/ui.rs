@@ -1,5 +1,5 @@
 use chrono::{Local, Timelike};
-use patin::ui::{Color, DrawCommand, FontFamily, Rect, TextAlign};
+use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_PASSWORD_BYTES: usize = 256;
@@ -382,6 +382,7 @@ fn text(bounds: Rect, value: &str, font_size: f32, color: Color) -> DrawCommand 
         font_size,
         line_height: font_size * 1.3,
         family: FontFamily::SansSerif,
+        weight: FontWeight::Semibold,
         align: TextAlign::Center,
     }
 }

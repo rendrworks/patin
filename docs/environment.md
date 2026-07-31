@@ -54,9 +54,17 @@ Patin toolkit and other consumers do not inherit it.
 
 The launcher additionally uses `image` 0.25.10 with only its PNG feature and
 `resvg` 0.47.0 with all default features disabled. They decode PNG and render
-SVG application icons found through standard XDG data and icon locations,
-without enabling resvg's text, system-font, or raster-image features. Entries
-without a usable icon receive a neutral fallback.
+SVG application icons without enabling resvg's text, system-font, or
+raster-image features. `freedesktop-icons` 0.4.0 resolves their paths by reading
+the selected theme's indexes, declared sizes, inheritance, XDG roots, hicolor
+fallback, and pixmaps. Some installations contain valid files omitted from
+their theme metadata, so the launcher applies a bounded exact-name search of
+only the selected theme and `hicolor` trees after standards lookup fails. These
+fallback roots preserve environment-provided priority but always include the
+canonical `/usr/local/share`, `/usr/share`, and system Flatpak export roots so
+an incomplete remote-session `XDG_DATA_DIRS` cannot hide system icons. These
+dependencies remain launcher-only; entries without a usable icon receive a
+neutral fallback.
 
 The toolkit does not require a battery, backlight, or audio command. The demo
 optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and

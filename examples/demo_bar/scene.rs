@@ -1,7 +1,7 @@
 use chrono::{Local, Timelike};
 use patin::{
     platform::Shell,
-    ui::{Color, DrawCommand, FontFamily, Length, Rect, Size, TextAlign, row},
+    ui::{Color, DrawCommand, FontFamily, FontWeight, Length, Rect, Size, TextAlign, row},
 };
 use patin_service_brightness::BrightnessSnapshot;
 use patin_service_network::NetworkSnapshot;
@@ -226,6 +226,7 @@ impl Shell for DemoBar {
             font_size: 15.0,
             line_height: 20.0,
             family: FontFamily::Monospace,
+            weight: FontWeight::Semibold,
             align: TextAlign::End,
         });
         commands

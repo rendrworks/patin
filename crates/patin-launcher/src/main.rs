@@ -19,7 +19,7 @@ fn main() -> ExitCode {
         namespace: "patin-launcher".into(),
         layer: LayerLevel::Overlay,
         anchors: Anchors::default(),
-        size: (380, 540),
+        size: (280, 350),
         exclusive_zone: 0,
         keyboard: KeyboardPolicy::None,
     };

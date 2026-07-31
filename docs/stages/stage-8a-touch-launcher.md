@@ -30,14 +30,23 @@ overlay so the user can choose another app or dismiss it.
 
 ## Floating layout, icons, scrolling, and lifecycle
 
-The binary requests a `380×540` overlay-layer surface with no anchors, reserves
+The binary requests a `280×350` overlay-layer surface with no anchors, reserves
 no exclusive zone, and requests no keyboard. Layer-shell compositors center an
 unanchored fixed-size surface, so the launcher is a real floating window and
 the rest of the output is neither covered nor dimmed. `ui::Launcher::layout`
 places a single column of application rows inside the rounded dark surface.
+The surface uses Patin's deep-purple bar/lock palette. Its ten visible lines
+use normal-weight 14px text and small 18px icons; there is no visible scrollbar
+or per-row decoration.
 
 Each row contains the localized application name and its desktop-entry icon.
-The launcher searches standard XDG icon roots for PNG and SVG variants. It
+`freedesktop-icons` 0.4.0 resolves the icon through the GTK-selected theme,
+theme indexes and inheritance, XDG roots, hicolor, and pixmaps. The launcher
+then uses a bounded exact-name traversal of the selected theme and `hicolor`
+only when incomplete theme metadata hides a file that is actually installed.
+Environment roots retain priority, followed by canonical system and Flatpak
+roots so SSH or recovery-session environment differences do not hide icons.
+The launcher
 decodes PNG through `image` 0.25.10's PNG-only feature and rasterizes SVG with
 `resvg` 0.47.0 with all default features disabled; a neutral square is used
 when no supported icon is available. The toolkit's `TextAlign::Start` provides
@@ -47,9 +56,9 @@ behind Patin's internal render boundary.
 `Shell::scroll_by` is a defaulted vertical-scroll hook. The platform translates
 pointer-axis values into it. Touch contacts now activate on release only when
 they stayed within an eight-logical-pixel tap threshold; a drag instead emits
-scroll deltas. `ui::Launcher::scroll_by` advances a clamped visible window and
-the thin scrollbar reports its position. This avoids both page controls and
-accidental launches while swiping.
+scroll deltas. `ui::Launcher::scroll_by` advances a clamped visible window.
+This gives an `fzf`-like list motion without page controls, visible scroll
+chrome, or accidental launches while swiping.
 
 The toolkit gains one general lifecycle hook: `Shell::close_requested` defaults
 to `false`, preserving every existing consumer. The platform checks it after
@@ -82,11 +91,12 @@ layer-shell compositor may bind the same executable however it prefers.
 
 ## Changed files and important functions
 
-- `crates/patin-launcher` owns desktop discovery/launch, XDG icon loading,
+- `crates/patin-launcher` owns desktop discovery/launch, freedesktop theme icon
+  resolution and loading,
   scrolling list state, hit-testing, rendering, and the standalone overlay
   entrypoint.
 - `src/ui.rs` and `src/render.rs` add start-aligned text and decoded RGBA image
-  commands.
+  commands plus an explicit normal/semibold text-weight choice.
 - `src/platform.rs` adds defaulted finite-composition and scroll hooks, pointer
   wheel translation, and tap-versus-drag touch handling.
 - `scripts/install-launcher-user.sh` builds the locked release package and
@@ -115,21 +125,22 @@ $ git diff --check
 (no output, exit 0)
 ```
 
-Five launcher tests cover visible/hidden desktop entries, parsed launch
-arguments, fixed-surface row containment, clamped scrolling, and clean close
-requests. A short local smoke run found 12 launchable applications
-before reporting the expected `Could not find wayland compositor`, because the
+Six launcher tests cover visible/hidden desktop entries, parsed launch
+arguments, reverse-DNS icon-name preservation, fixed-surface row containment,
+clamped scrolling, and clean close requests. A short local smoke run found 13
+launchable applications and resolved 9 icons before reporting the expected
+`Could not find wayland compositor`, because the
 tool session does not inherit the laptop's graphical Wayland environment.
 
-The phone-native five-test suite and optimized build passed for the final
-`380×540` floating list. A timed live run discovered 33 applications, resolved
-10 installed theme icons with neutral fallbacks for the remainder, and
+The phone-native six-test suite and optimized build passed for the final
+`280×350` floating list. A timed live run discovered 33 applications, resolved
+32 installed theme icons with a neutral fallback for the remaining app, and
 connected to 0xin successfully:
 
 ```text
 $ env -u LD_LIBRARY_PATH XDG_RUNTIME_DIR=/run/user/10000 \
   WAYLAND_DISPLAY=wayland-0 timeout 15 ~/.local/bin/patin-launcher
-patin-launcher: discovered 33 launchable applications (10 resolved icons)
+patin-launcher: discovered 33 launchable applications (32 resolved icons)
 patin: connected; waiting for the compositor to configure the surface
 ```
 

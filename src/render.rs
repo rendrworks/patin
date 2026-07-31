@@ -7,7 +7,7 @@ use tiny_skia::{
     Transform,
 };
 
-use crate::ui::{DrawCommand, FontFamily, Rect, TextAlign};
+use crate::ui::{DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 
 pub const SCALE_DENOMINATOR: u32 = 120;
 
@@ -128,6 +128,7 @@ impl CpuRenderer {
                     font_size,
                     line_height,
                     family,
+                    weight,
                     align,
                 } => self.draw_text(
                     &mut pixmap,
@@ -138,6 +139,7 @@ impl CpuRenderer {
                     *font_size,
                     *line_height,
                     *family,
+                    *weight,
                     *align,
                 ),
             }
@@ -158,6 +160,7 @@ impl CpuRenderer {
         font_size: f32,
         line_height: f32,
         family: FontFamily,
+        weight: FontWeight,
         align: TextAlign,
     ) {
         let factor = scale.factor();
@@ -175,7 +178,10 @@ impl CpuRenderer {
                     FontFamily::SansSerif => Family::SansSerif,
                     FontFamily::Monospace => Family::Monospace,
                 })
-                .weight(Weight::SEMIBOLD),
+                .weight(match weight {
+                    FontWeight::Normal => Weight::NORMAL,
+                    FontWeight::Semibold => Weight::SEMIBOLD,
+                }),
             Shaping::Advanced,
             Some(match align {
                 TextAlign::Start => Align::Left,

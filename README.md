@@ -85,10 +85,12 @@ floating list, and closes after successfully spawning the tapped application:
 patin-launcher
 ```
 
-The unanchored `380×540` layer surface is centered by the compositor instead of
+The unanchored `280×350` layer surface is centered by the compositor instead of
 covering the output. It contains a simple vertical list with an XDG application
 icon and name per row. Drag vertically on touch or use a pointer wheel to
-scroll; tap a row to launch it. On 0xin, the existing configurable shell
+scroll through ten compact lines; tap a row to launch it. Its deep-purple
+palette matches the demo bar and lock screen rather than copying Fuzzel's
+colors. On 0xin, the existing configurable shell
 gestures can replace Fuzzel without adding a compositor-specific code path to
 Patin:
 

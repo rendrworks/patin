@@ -26,7 +26,12 @@ pub struct Application {
 }
 
 impl Application {
-    fn from_entry(entry: DesktopEntry, locales: &[String], desktops: &[String]) -> Option<Self> {
+    fn from_entry(
+        entry: DesktopEntry,
+        locales: &[String],
+        desktops: &[String],
+        icon_theme: Option<&str>,
+    ) -> Option<Self> {
         if entry.type_() != Some("Application")
             || entry.hidden()
             || entry.no_display()
@@ -44,9 +49,17 @@ impl Application {
         if name.is_empty() || command.is_empty() {
             return None;
         }
+        let icon_name = entry.icon();
+        let icon = icon_name.and_then(|name| load_icon(name, icon_theme));
+        if env::var_os("PATIN_TRACE").is_some()
+            && let Some(icon_name) = icon_name
+            && icon.is_none()
+        {
+            eprintln!("patin-launcher: no usable icon for {name} ({icon_name})");
+        }
         Some(Self {
             name,
-            icon: entry.icon().and_then(load_icon),
+            icon,
             command,
             working_directory: entry.path().map(PathBuf::from),
         })
@@ -83,38 +96,60 @@ impl Application {
     }
 }
 
-fn load_icon(name: &str) -> Option<AppIcon> {
-    icon_candidates(name).into_iter().find_map(|path| {
-        match path.extension().and_then(|extension| extension.to_str()) {
-            Some("png") => decode_png(&path),
-            Some("svg") => decode_svg(&path),
-            _ => None,
+fn load_icon(name: &str, icon_theme: Option<&str>) -> Option<AppIcon> {
+    let supplied = Path::new(name);
+    let path = if supplied.is_absolute() {
+        Some(supplied.to_owned())
+    } else {
+        let lookup_name = icon_lookup_name(name);
+        let lookup = freedesktop_icons::lookup(lookup_name)
+            .with_size(32)
+            .with_cache();
+        let resolved = match icon_theme {
+            Some(theme) => lookup.with_theme(theme).find(),
+            None => lookup.find(),
+        };
+        resolved.or_else(|| greedy_theme_fallback(lookup_name, icon_theme))
+    };
+    let Some(path) = path else {
+        if env::var_os("PATIN_TRACE").is_some() {
+            eprintln!("patin-launcher: theme resolver found no path for {name}");
         }
-    })
+        return None;
+    };
+    let icon = match path.extension().and_then(|extension| extension.to_str()) {
+        Some("png") => decode_png(&path),
+        Some("svg") => decode_svg(&path),
+        _ => None,
+    };
+    if icon.is_none() && env::var_os("PATIN_TRACE").is_some() {
+        eprintln!("patin-launcher: could not decode icon {}", path.display());
+    }
+    icon
 }
 
-fn icon_candidates(name: &str) -> Vec<PathBuf> {
+fn icon_lookup_name(name: &str) -> &str {
     let supplied = Path::new(name);
-    if supplied.is_absolute() {
-        return vec![supplied.to_owned()];
+    match supplied
+        .extension()
+        .and_then(|extension| extension.to_str())
+    {
+        Some("png" | "svg") => supplied
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(name),
+        _ => name,
     }
+}
 
-    let filenames = if supplied.extension().is_some() {
-        vec![name.to_owned()]
-    } else {
-        vec![
-            format!("{name}.png"),
-            format!("{name}.svg"),
-            format!("{name}-symbolic.svg"),
-        ]
-    };
-    let mut roots = Vec::new();
+fn greedy_theme_fallback(name: &str, icon_theme: Option<&str>) -> Option<PathBuf> {
+    let mut data_roots = Vec::new();
     if let Some(data_home) = env::var_os("XDG_DATA_HOME") {
-        roots.push(PathBuf::from(data_home));
+        data_roots.push(PathBuf::from(data_home));
     } else if let Some(home) = env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join(".local/share"));
+        data_roots.push(PathBuf::from(home).join(".local/share"));
     }
-    roots.extend(
+    data_roots.extend(
         env::var_os("XDG_DATA_DIRS")
             .map(|value| env::split_paths(&value).collect())
             .unwrap_or_else(|| {
@@ -124,43 +159,64 @@ fn icon_candidates(name: &str) -> Vec<PathBuf> {
                 ]
             }),
     );
-
-    const THEMES: [&str; 2] = ["hicolor", "Adwaita"];
-    const SIZES: [&str; 10] = [
-        "64x64", "48x48", "96x96", "128x128", "192x192", "256x256", "32x32", "24x24", "22x22",
-        "16x16",
-    ];
-    let mut candidates = Vec::new();
-    for root in &roots {
-        for theme in THEMES {
-            for size in SIZES {
-                for filename in &filenames {
-                    candidates.push(
-                        root.join("icons")
-                            .join(theme)
-                            .join(size)
-                            .join("apps")
-                            .join(filename),
-                    );
-                }
-            }
-            for filename in &filenames {
-                for directory in ["scalable", "symbolic"] {
-                    candidates.push(
-                        root.join("icons")
-                            .join(theme)
-                            .join(directory)
-                            .join("apps")
-                            .join(filename),
-                    );
-                }
-            }
-        }
-        for filename in &filenames {
-            candidates.push(root.join("pixmaps").join(filename));
+    for root in [
+        PathBuf::from("/usr/local/share"),
+        PathBuf::from("/usr/share"),
+        PathBuf::from("/var/lib/flatpak/exports/share"),
+    ] {
+        if !data_roots.contains(&root) {
+            data_roots.push(root);
         }
     }
-    candidates
+
+    let mut themes = icon_theme.into_iter().collect::<Vec<_>>();
+    if !themes.contains(&"hicolor") {
+        themes.push("hicolor");
+    }
+    let filenames = [
+        format!("{name}.png"),
+        format!("{name}.svg"),
+        format!("{name}-symbolic.svg"),
+    ];
+    for filename in &filenames {
+        for root in &data_roots {
+            for theme in &themes {
+                let theme_root = root.join("icons").join(theme);
+                for directory in ["scalable/apps", "symbolic/apps"] {
+                    let direct = theme_root.join(directory).join(filename);
+                    if direct.is_file() {
+                        return Some(direct);
+                    }
+                }
+                if let Some(path) = find_file(&theme_root, filename, 0) {
+                    return Some(path);
+                }
+            }
+            let pixmap = root.join("pixmaps").join(filename);
+            if pixmap.is_file() {
+                return Some(pixmap);
+            }
+        }
+    }
+    None
+}
+
+fn find_file(directory: &Path, filename: &str, depth: u8) -> Option<PathBuf> {
+    if depth > 4 {
+        return None;
+    }
+    for entry in directory.read_dir().ok()?.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_file() && entry.file_name() == filename {
+            return Some(path);
+        }
+        if path.is_dir()
+            && let Some(found) = find_file(&path, filename, depth + 1)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn decode_svg(path: &Path) -> Option<AppIcon> {
@@ -205,11 +261,14 @@ fn decode_png(path: &Path) -> Option<AppIcon> {
 pub fn discover() -> Vec<Application> {
     let locales = get_languages_from_env();
     let desktops = current_desktop().unwrap_or_default();
+    let icon_theme = freedesktop_icons::default_theme_gtk();
     let mut seen = HashSet::new();
     let mut applications = Iter::new(default_paths())
         .entries(Some(&locales))
         .filter(|entry| seen.insert(entry.id().to_owned()))
-        .filter_map(|entry| Application::from_entry(entry, &locales, &desktops))
+        .filter_map(|entry| {
+            Application::from_entry(entry, &locales, &desktops, icon_theme.as_deref())
+        })
         .collect::<Vec<_>>();
     applications.sort_by_cached_key(|application| application.name.to_lowercase());
     applications
@@ -243,7 +302,7 @@ fn executable_exists(executable: &str) -> bool {
 mod tests {
     use freedesktop_desktop_entry::DesktopEntry;
 
-    use super::Application;
+    use super::{Application, icon_lookup_name};
 
     fn entry(name: &str, exec: &str) -> DesktopEntry {
         let mut entry = DesktopEntry::from_appid(format!("org.patin.{name}"));
@@ -255,9 +314,13 @@ mod tests {
 
     #[test]
     fn accepts_visible_application_and_parses_exec() {
-        let application =
-            Application::from_entry(entry("Calculator", "calculator --new-window"), &[], &[])
-                .unwrap();
+        let application = Application::from_entry(
+            entry("Calculator", "calculator --new-window"),
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(application.name, "Calculator");
         assert_eq!(application.command, ["calculator", "--new-window"]);
     }
@@ -266,10 +329,20 @@ mod tests {
     fn rejects_hidden_and_non_application_entries() {
         let mut hidden = entry("Hidden", "hidden");
         hidden.add_desktop_entry("NoDisplay".into(), "true".into());
-        assert!(Application::from_entry(hidden, &[], &[]).is_none());
+        assert!(Application::from_entry(hidden, &[], &[], None).is_none());
 
         let mut link = entry("Website", "browser");
         link.add_desktop_entry("Type".into(), "Link".into());
-        assert!(Application::from_entry(link, &[], &[]).is_none());
+        assert!(Application::from_entry(link, &[], &[], None).is_none());
+    }
+
+    #[test]
+    fn preserves_reverse_dns_icon_names_and_strips_real_extensions() {
+        assert_eq!(
+            icon_lookup_name("org.gnome.Calculator"),
+            "org.gnome.Calculator"
+        );
+        assert_eq!(icon_lookup_name("firefox.png"), "firefox");
+        assert_eq!(icon_lookup_name("camera.svg"), "camera");
     }
 }
