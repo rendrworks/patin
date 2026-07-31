@@ -20,3 +20,4 @@
 - [Stage 6c — Network Service Adapter](stages/stage-6c-network.md)
 - [Stage 7 — Session Lock](stages/stage-7-session-lock.md)
 - [Stage 7b — Selectable Keypad and Idle Blank/Wake](stages/stage-7b-keypad-and-blank.md)
+- [Stage 7c — Adaptive Lock-Screen Input](stages/stage-7c-lock-visual-polish.md)

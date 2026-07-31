@@ -20,6 +20,14 @@ enum Page {
     Symbols,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct KeyLayout {
+    hit_bounds: Rect,
+    visual_bounds: Rect,
+    label: String,
+    key: Key,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyboardMode {
     Full,
@@ -40,7 +48,7 @@ impl LockUi {
         Self {
             password: Zeroizing::new(String::new()),
             verifying: false,
-            message: "Enter password".into(),
+            message: String::new(),
             shift: false,
             page: Page::Letters,
             mode,
@@ -51,6 +59,7 @@ impl LockUi {
         if self.verifying {
             return false;
         }
+        let mut edited = false;
         match key {
             Key::Character(mut character) => {
                 if self.shift {
@@ -58,12 +67,16 @@ impl LockUi {
                 }
                 if self.password.len() + character.len_utf8() <= MAX_PASSWORD_BYTES {
                     self.password.push(character);
+                    edited = true;
                 }
                 self.shift = false;
             }
-            Key::Space if self.password.len() < MAX_PASSWORD_BYTES => self.password.push(' '),
+            Key::Space if self.password.len() < MAX_PASSWORD_BYTES => {
+                self.password.push(' ');
+                edited = true;
+            }
             Key::Backspace => {
-                self.password.pop();
+                edited = self.password.pop().is_some();
             }
             Key::Shift => self.shift = !self.shift,
             Key::Symbols => {
@@ -75,6 +88,9 @@ impl LockUi {
                 self.shift = false;
             }
             Key::Enter | Key::Space => {}
+        }
+        if edited {
+            self.message.clear();
         }
         true
     }
@@ -99,11 +115,19 @@ impl LockUi {
     pub fn key_at(&self, width: f32, height: f32, position: (f64, f64)) -> Option<Key> {
         keyboard(self.mode, self.page, self.shift, width, height)
             .into_iter()
-            .find_map(|(bounds, _, key)| bounds.contains(position).then_some(key))
+            .find_map(|layout| layout.hit_bounds.contains(position).then_some(layout.key))
     }
 
     pub fn commands(&self, width: f32, height: f32, username: &str) -> Vec<DrawCommand> {
-        let keyboard_top = (height * 0.54).max(360.0).min(height - 260.0);
+        let content_width = (width - 32.0).clamp(0.0, 440.0);
+        let content_x = (width - content_width) / 2.0;
+        let field_bounds = Rect::new(content_x, height * 0.33, content_width, 58.0);
+        let field_value = self.password_field_text();
+        let field_color = if self.password.is_empty() {
+            Color(166, 155, 184, 255)
+        } else {
+            Color(250, 248, 255, 255)
+        };
         let mut commands = vec![
             fill(Rect::new(0.0, 0.0, width, height), Color(15, 13, 24, 255)),
             text(
@@ -113,49 +137,63 @@ impl LockUi {
                 Color(250, 248, 255, 255),
             ),
             text(
-                Rect::new(width * 0.1, height * 0.27, width * 0.8, 48.0),
+                Rect::new(content_x, height * 0.25, content_width, 48.0),
                 username,
-                24.0,
+                22.0,
                 Color(220, 214, 232, 255),
             ),
-            fill(
-                Rect::new(width * 0.1, height * 0.34, width * 0.8, 64.0),
-                Color(42, 36, 57, 255),
+            rounded_fill(field_bounds, Color(75, 62, 98, 255), 18.0),
+            rounded_fill(field_bounds.inset(1.0), Color(35, 30, 47, 255), 17.0),
+            text(
+                field_bounds.inset(8.0),
+                &field_value,
+                if self.password.is_empty() { 18.0 } else { 28.0 },
+                field_color,
             ),
             text(
-                Rect::new(width * 0.12, height * 0.34, width * 0.76, 64.0),
-                &"•".repeat(self.password.chars().count()),
-                30.0,
-                Color(250, 248, 255, 255),
-            ),
-            text(
-                Rect::new(width * 0.1, height * 0.41, width * 0.8, 42.0),
+                Rect::new(content_x, height * 0.405, content_width, 42.0),
                 &self.message,
-                18.0,
-                Color(200, 190, 218, 255),
+                17.0,
+                if self.verifying {
+                    Color(200, 190, 218, 255)
+                } else {
+                    Color(232, 150, 177, 255)
+                },
             ),
         ];
-        for (bounds, label, _) in keyboard_at(
-            self.mode,
-            self.page,
-            self.shift,
-            width,
-            height,
-            keyboard_top,
-        ) {
+        for layout in keyboard(self.mode, self.page, self.shift, width, height) {
+            let (background, foreground) = key_colors(layout.key, self.shift, self.verifying);
             commands.push(rounded_fill(
-                bounds.inset(3.0),
-                Color(55, 47, 72, 255),
-                10.0,
+                layout.visual_bounds,
+                background,
+                if self.mode == KeyboardMode::Numeric {
+                    18.0
+                } else {
+                    9.0
+                },
             ));
             commands.push(text(
-                bounds.inset(5.0),
-                &label,
-                20.0,
-                Color(250, 248, 255, 255),
+                layout.visual_bounds.inset(4.0),
+                &layout.label,
+                if self.mode == KeyboardMode::Numeric {
+                    23.0
+                } else {
+                    18.0
+                },
+                foreground,
             ));
         }
         commands
+    }
+
+    fn password_field_text(&self) -> String {
+        if self.verifying {
+            String::new()
+        } else if self.password.is_empty() {
+            "Enter password".into()
+        } else {
+            "•".repeat(self.password.chars().count())
+        }
     }
 }
 
@@ -165,32 +203,25 @@ fn keyboard(
     shift: bool,
     width: f32,
     height: f32,
-) -> Vec<(Rect, String, Key)> {
-    let top = (height * 0.54).max(360.0).min(height - 260.0);
-    keyboard_at(mode, page, shift, width, height, top)
-}
-
-fn keyboard_at(
-    mode: KeyboardMode,
-    page: Page,
-    shift: bool,
-    width: f32,
-    height: f32,
-    top: f32,
-) -> Vec<(Rect, String, Key)> {
+) -> Vec<KeyLayout> {
     match mode {
-        KeyboardMode::Full => keyboard_at_full(page, shift, width, height, top),
-        KeyboardMode::Numeric => keyboard_at_numeric(width, height, top),
+        KeyboardMode::Full => keyboard_full(page, shift, width, height),
+        KeyboardMode::Numeric => keyboard_numeric(width, height),
     }
 }
 
-fn keyboard_at_numeric(width: f32, height: f32, top: f32) -> Vec<(Rect, String, Key)> {
-    const ROWS: f32 = 4.0;
-    const COLUMNS: f32 = 3.0;
+fn keyboard_numeric(width: f32, height: f32) -> Vec<KeyLayout> {
     let gap = 14.0;
-    let available_height = height - top - 12.0;
-    let row_height = ((available_height - gap * (ROWS - 1.0)) / ROWS).max(36.0);
-    let key_width = ((width - gap * (COLUMNS + 1.0)) / COLUMNS).max(36.0);
+    let bottom_margin = keyboard_bottom_margin(height);
+    let width_limited_size = (width - 60.0 - gap * 2.0) / 3.0;
+    let height_limited_size = (height * 0.51 - bottom_margin - gap * 3.0) / 4.0;
+    let key_size = width_limited_size
+        .min(height_limited_size)
+        .clamp(44.0, 72.0);
+    let grid_width = key_size * 3.0 + gap * 2.0;
+    let grid_height = key_size * 4.0 + gap * 3.0;
+    let left = (width - grid_width) / 2.0;
+    let top = height - grid_height - bottom_margin;
     let rows: [[(&str, Key); 3]; 4] = [
         [
             ("1", Key::Character('1')),
@@ -210,70 +241,78 @@ fn keyboard_at_numeric(width: f32, height: f32, top: f32) -> Vec<(Rect, String, 
         [
             ("⌫", Key::Backspace),
             ("0", Key::Character('0')),
-            ("enter", Key::Enter),
+            ("✓", Key::Enter),
         ],
     ];
     let mut keys = Vec::new();
     for (row_index, row) in rows.into_iter().enumerate() {
         for (column_index, (label, key)) in row.into_iter().enumerate() {
-            keys.push((
-                Rect::new(
-                    gap + column_index as f32 * (key_width + gap),
-                    top + row_index as f32 * (row_height + gap),
-                    key_width,
-                    row_height,
+            let visual_bounds = Rect::new(
+                left + column_index as f32 * (key_size + gap),
+                top + row_index as f32 * (key_size + gap),
+                key_size,
+                key_size,
+            );
+            keys.push(KeyLayout {
+                hit_bounds: Rect::new(
+                    visual_bounds.origin.x - gap / 2.0,
+                    visual_bounds.origin.y - gap / 2.0,
+                    key_size + gap,
+                    key_size + gap,
                 ),
-                label.into(),
+                visual_bounds,
+                label: label.into(),
                 key,
-            ));
+            });
         }
     }
     keys
 }
 
-fn keyboard_at_full(
-    page: Page,
-    shift: bool,
-    width: f32,
-    height: f32,
-    top: f32,
-) -> Vec<(Rect, String, Key)> {
+fn keyboard_full(page: Page, shift: bool, width: f32, height: f32) -> Vec<KeyLayout> {
     let rows: &[&str] = match page {
         Page::Letters => &["qwertyuiop", "asdfghjkl", "zxcvbnm"],
         Page::Symbols => &["1234567890", "@#$%&*-+=", "!?_/:;()"],
     };
-    let gap = 3.0;
-    let row_height = ((height - top - 12.0) / 4.0).max(44.0);
+    let gap = 5.0;
+    let row_height = (height * 0.058).clamp(44.0, 52.0);
+    let keyboard_width = (width - 12.0).clamp(0.0, 720.0);
+    let keyboard_left = (width - keyboard_width) / 2.0;
+    let keyboard_height = row_height * 4.0 + gap * 3.0;
+    let top = (height - keyboard_height - keyboard_bottom_margin(height)).max(height * 0.49);
     let mut keys = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
         let chars: Vec<char> = row.chars().collect();
         let inset = if row_index == 1 {
-            width * 0.04
+            keyboard_width * 0.04
         } else if row_index == 2 {
-            width * 0.1
+            keyboard_width * 0.1
         } else {
             0.0
         };
-        let key_width = (width - inset * 2.0) / chars.len() as f32;
+        let row_width = keyboard_width - inset * 2.0;
+        let key_width = (row_width - gap * (chars.len() - 1) as f32) / chars.len() as f32;
         for (index, character) in chars.into_iter().enumerate() {
             let shown = if shift {
                 character.to_ascii_uppercase()
             } else {
                 character
             };
-            keys.push((
-                Rect::new(
-                    inset + index as f32 * key_width,
-                    top + row_index as f32 * row_height,
-                    key_width,
-                    row_height,
-                ),
-                shown.to_string(),
-                Key::Character(character),
-            ));
+            let hit_bounds = Rect::new(
+                keyboard_left + inset + index as f32 * (key_width + gap),
+                top + row_index as f32 * (row_height + gap),
+                key_width,
+                row_height,
+            );
+            keys.push(KeyLayout {
+                hit_bounds,
+                visual_bounds: hit_bounds.inset(1.5),
+                label: shown.to_string(),
+                key: Key::Character(character),
+            });
         }
     }
-    let y = top + row_height * 3.0;
+    let y = top + (row_height + gap) * 3.0;
     let parts = [0.18, 0.16, 0.32, 0.16, 0.18];
     let labels = [
         (
@@ -287,19 +326,40 @@ fn keyboard_at_full(
         ("?123", Key::Symbols),
         ("space", Key::Space),
         ("⌫", Key::Backspace),
-        ("enter", Key::Enter),
+        ("✓", Key::Enter),
     ];
-    let mut x = 0.0;
+    let mut x = keyboard_left;
     for ((label, key), fraction) in labels.into_iter().zip(parts) {
-        let key_width = width * fraction;
-        keys.push((
-            Rect::new(x + gap, y, key_width - gap * 2.0, row_height),
-            label.into(),
+        let part_width = keyboard_width * fraction;
+        let hit_bounds = Rect::new(x + gap / 2.0, y, part_width - gap, row_height);
+        keys.push(KeyLayout {
+            hit_bounds,
+            visual_bounds: hit_bounds.inset(1.5),
+            label: label.into(),
             key,
-        ));
-        x += key_width;
+        });
+        x += part_width;
     }
     keys
+}
+
+fn keyboard_bottom_margin(height: f32) -> f32 {
+    (height * 0.11).clamp(48.0, 112.0)
+}
+
+fn key_colors(key: Key, shift: bool, verifying: bool) -> (Color, Color) {
+    if verifying {
+        return (Color(38, 33, 49, 255), Color(126, 118, 140, 255));
+    }
+    match key {
+        Key::Enter => (Color(119, 79, 174, 255), Color(255, 252, 255, 255)),
+        Key::Backspace => (Color(72, 48, 65, 255), Color(245, 211, 224, 255)),
+        Key::Shift if shift => (Color(100, 72, 139, 255), Color(255, 252, 255, 255)),
+        Key::Shift | Key::Symbols | Key::Space => {
+            (Color(45, 39, 58, 255), Color(218, 209, 230, 255))
+        }
+        Key::Character(_) => (Color(57, 48, 75, 255), Color(250, 248, 255, 255)),
+    }
 }
 
 fn fill(bounds: Rect, color: Color) -> DrawCommand {
@@ -334,6 +394,17 @@ fn current_time() -> String {
 #[cfg(test)]
 mod tests {
     use super::{Key, KeyboardMode, LockUi, MAX_PASSWORD_BYTES};
+    use patin::ui::DrawCommand;
+
+    fn text_values(ui: &LockUi) -> Vec<String> {
+        ui.commands(500.0, 1000.0, "user")
+            .into_iter()
+            .filter_map(|command| match command {
+                DrawCommand::Text { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
 
     #[test]
     fn password_is_masked_and_bounded() {
@@ -356,24 +427,94 @@ mod tests {
     }
 
     #[test]
+    fn password_hint_tracks_editing_and_verification() {
+        let mut ui = LockUi::new(KeyboardMode::Full);
+        assert!(text_values(&ui).contains(&"Enter password".into()));
+
+        ui.press(Key::Character('s'));
+        let values = text_values(&ui);
+        assert!(!values.contains(&"Enter password".into()));
+        assert!(values.contains(&"•".into()));
+
+        ui.take_password();
+        let values = text_values(&ui);
+        assert!(!values.contains(&"Enter password".into()));
+        assert!(values.contains(&"Verifying…".into()));
+    }
+
+    #[test]
+    fn authentication_error_clears_when_editing_resumes() {
+        let mut ui = LockUi::new(KeyboardMode::Full);
+        ui.failed("Authentication failed".into());
+        assert_eq!(ui.message, "Authentication failed");
+
+        ui.press(Key::Shift);
+        assert_eq!(ui.message, "Authentication failed");
+        ui.press(Key::Character('a'));
+        assert!(ui.message.is_empty());
+    }
+
+    #[test]
     fn numeric_mode_only_exposes_digits_and_no_page_toggle() {
         let ui = LockUi::new(KeyboardMode::Numeric);
-        let keys: Vec<Key> = super::keyboard(
+        let layouts = super::keyboard(
             KeyboardMode::Numeric,
             super::Page::Letters,
             false,
             400.0,
             800.0,
-        )
-        .into_iter()
-        .map(|(_, _, key)| key)
-        .collect();
+        );
+        let keys: Vec<Key> = layouts.iter().map(|layout| layout.key).collect();
         assert!(!keys.contains(&Key::Shift));
         assert!(!keys.contains(&Key::Symbols));
         assert!(keys.contains(&Key::Character('5')));
+        let backspace = layouts
+            .iter()
+            .find(|layout| layout.key == Key::Backspace)
+            .unwrap()
+            .hit_bounds;
         let position = ui
-            .key_at(400.0, 800.0, (70.0, 750.0))
-            .expect("bottom-left cell of the numeric grid should hit a key");
+            .key_at(
+                400.0,
+                800.0,
+                (
+                    (backspace.origin.x + backspace.size.width / 2.0) as f64,
+                    (backspace.origin.y + backspace.size.height / 2.0) as f64,
+                ),
+            )
+            .expect("center of the numeric backspace should hit the key");
         assert_eq!(position, Key::Backspace);
+    }
+
+    #[test]
+    fn keyboards_are_compact_centered_and_inside_common_outputs() {
+        for (width, height) in [(320.0, 500.0), (509.0, 1020.0), (1920.0, 1080.0)] {
+            for mode in [KeyboardMode::Numeric, KeyboardMode::Full] {
+                let layouts = super::keyboard(mode, super::Page::Letters, false, width, height);
+                let left = layouts
+                    .iter()
+                    .map(|layout| layout.visual_bounds.origin.x)
+                    .fold(f32::INFINITY, f32::min);
+                let right = layouts
+                    .iter()
+                    .map(|layout| layout.visual_bounds.origin.x + layout.visual_bounds.size.width)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let bottom = layouts
+                    .iter()
+                    .map(|layout| layout.visual_bounds.origin.y + layout.visual_bounds.size.height)
+                    .fold(f32::NEG_INFINITY, f32::max);
+
+                assert!(left >= 0.0);
+                assert!(right <= width);
+                assert!(bottom <= height - super::keyboard_bottom_margin(height));
+                assert!(((left + right) / 2.0 - width / 2.0).abs() < 1.0);
+                assert!(right - left <= 720.0);
+                assert!(
+                    layouts
+                        .iter()
+                        .all(|layout| layout.hit_bounds.size.height >= 44.0)
+                );
+            }
+        }
     }
 }

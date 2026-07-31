@@ -103,6 +103,13 @@ password PAM checks:
 patin-lock --keypad=numeric
 ```
 
+Both keyboards use compact key groups with an adaptive lower-screen inset
+rather than stretching to fill an output or sitting against its bottom edge.
+The numeric keypad stays centered, while the full keyboard is width-limited on
+larger outputs. The empty password field contains its `Enter password` hint;
+typing replaces it with bullets, and authentication progress or errors remain
+visible below the field.
+
 Set `PATIN_LOCK_KEYPAD=numeric` (matching the existing `PATIN_TRACE`
 convention) to make that the default without passing the flag every time —
 export it from a shell profile for manual launches, or set it directly in

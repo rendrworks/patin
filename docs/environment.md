@@ -59,10 +59,12 @@ found or a required global is unavailable.
 
 ## Lock-screen requirements
 
-Building `patin-lock` requires the system PAM development package in addition
-to the Rust toolchain (`linux-pam-dev` on postmarketOS/Alpine,
-`pam-devel`/`pam` on other distributions). Runtime requires a compositor that
-advertises `ext-session-lock-v1` and a matching `/etc/pam.d/patin-lock` policy.
+Building `patin-lock` requires the system PAM and xkbcommon development
+packages in addition to the Rust toolchain (`linux-pam-dev` and
+`libxkbcommon-dev` on postmarketOS/Alpine; package names vary elsewhere).
+xkbcommon is the keyboard-state library used by SCTK's keyboard support.
+Runtime requires a compositor that advertises `ext-session-lock-v1` and a
+matching `/etc/pam.d/patin-lock` policy.
 
 ```sh
 ./scripts/install-lock-user.sh
