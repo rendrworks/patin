@@ -3,6 +3,10 @@ use patin::{
     platform::Shell,
     ui::{Color, DrawCommand, FontFamily, Length, Rect, Size, TextAlign, row},
 };
+use patin_service_brightness::BrightnessSnapshot;
+use patin_service_network::NetworkSnapshot;
+use patin_service_upower::BatterySnapshot;
+use patin_service_volume::VolumeSnapshot;
 
 use super::services::SystemStatus;
 
@@ -35,10 +39,10 @@ pub struct DemoBar {
     brightness_bounds: Option<Rect>,
     network_bounds: Option<Rect>,
     clock_bounds: Rect,
-    battery: Option<String>,
-    volume: Option<String>,
-    brightness: Option<String>,
-    network: Option<String>,
+    battery: Option<BatterySnapshot>,
+    volume: Option<VolumeSnapshot>,
+    brightness: Option<BrightnessSnapshot>,
+    network: Option<NetworkSnapshot>,
     clock: String,
     damage: Vec<Rect>,
     status: SystemStatus,
@@ -49,11 +53,8 @@ impl DemoBar {
         let mut status = SystemStatus::new();
         let snapshot = status.poll();
         eprintln!(
-            "demo_bar: status providers: battery={}, volume={}, brightness={}, network={}",
-            snapshot.battery.as_deref().unwrap_or("unavailable"),
-            snapshot.volume.as_deref().unwrap_or("unavailable"),
-            snapshot.brightness.as_deref().unwrap_or("unavailable"),
-            snapshot.network.as_deref().unwrap_or("unavailable")
+            "demo_bar: status providers: battery={:?}, volume={:?}, brightness={:?}, network={:?}",
+            snapshot.battery, snapshot.volume, snapshot.brightness, snapshot.network
         );
         let mut bar = Self {
             size: Size::default(),
@@ -118,10 +119,10 @@ impl DemoBar {
 
     fn set_status(
         &mut self,
-        battery: Option<String>,
-        volume: Option<String>,
-        brightness: Option<String>,
-        network: Option<String>,
+        battery: Option<BatterySnapshot>,
+        volume: Option<VolumeSnapshot>,
+        brightness: Option<BrightnessSnapshot>,
+        network: Option<NetworkSnapshot>,
     ) -> bool {
         if self.battery == battery
             && self.volume == volume
@@ -206,23 +207,17 @@ impl Shell for DemoBar {
                 color: self.style.accent,
             },
         ];
-        for (bounds, text) in [
-            (self.battery_bounds, self.battery.as_ref()),
-            (self.volume_bounds, self.volume.as_ref()),
-            (self.brightness_bounds, self.brightness.as_ref()),
-            (self.network_bounds, self.network.as_ref()),
-        ] {
-            if let (Some(bounds), Some(text)) = (bounds, text) {
-                commands.push(DrawCommand::Text {
-                    bounds: bounds.inset(self.style.padding),
-                    text: text.clone(),
-                    color: self.style.text,
-                    font_size: 12.0,
-                    line_height: 20.0,
-                    family: FontFamily::SansSerif,
-                    align: TextAlign::Center,
-                });
-            }
+        if let (Some(bounds), Some(status)) = (self.battery_bounds, self.battery) {
+            commands.extend(battery_icon(bounds, status, self.style));
+        }
+        if let (Some(bounds), Some(status)) = (self.volume_bounds, self.volume) {
+            commands.extend(volume_icon(bounds, status, self.style));
+        }
+        if let (Some(bounds), Some(status)) = (self.brightness_bounds, self.brightness) {
+            commands.extend(brightness_icon(bounds, status, self.style));
+        }
+        if let (Some(bounds), Some(status)) = (self.network_bounds, self.network) {
+            commands.extend(network_icon(bounds, status, self.style));
         }
         commands.push(DrawCommand::Text {
             bounds: self.clock_bounds.inset(self.style.padding),
@@ -245,6 +240,234 @@ impl Shell for DemoBar {
     }
 }
 
+fn battery_icon(bounds: Rect, status: BatterySnapshot, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 24.0, 16.0);
+    let body = Rect::new(icon.origin.x, icon.origin.y + 2.0, 20.0, 12.0);
+    let interior = body.inset(2.0);
+    let level_width = interior.size.width * f32::from(status.percentage.min(100)) / 100.0;
+    let level_color = if status.percentage <= 15 {
+        Color(239, 96, 119, 255)
+    } else if status.charging {
+        style.accent
+    } else {
+        style.text
+    };
+    let mut commands = vec![
+        rounded(body, style.text, 2.5),
+        rounded(interior, style.background, 1.0),
+        rounded(
+            Rect::new(
+                interior.origin.x,
+                interior.origin.y,
+                level_width,
+                interior.size.height,
+            ),
+            level_color,
+            1.0,
+        ),
+        rounded(
+            Rect::new(icon.origin.x + 21.0, icon.origin.y + 6.0, 3.0, 4.0),
+            style.text,
+            1.0,
+        ),
+    ];
+    if status.charging {
+        commands.push(fill(
+            Rect::new(icon.origin.x + 9.0, icon.origin.y + 4.0, 2.0, 8.0),
+            style.background,
+        ));
+    }
+    commands
+}
+
+fn volume_icon(bounds: Rect, status: VolumeSnapshot, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 24.0, 18.0);
+    let mut commands = vec![
+        rounded(
+            Rect::new(icon.origin.x, icon.origin.y + 6.0, 5.0, 6.0),
+            style.text,
+            1.0,
+        ),
+        rounded(
+            Rect::new(icon.origin.x + 4.0, icon.origin.y + 3.0, 4.0, 12.0),
+            style.text,
+            1.5,
+        ),
+    ];
+    if status.muted {
+        commands.push(rounded(
+            Rect::new(icon.origin.x + 14.0, icon.origin.y + 3.0, 2.0, 12.0),
+            Color(239, 96, 119, 255),
+            1.0,
+        ));
+        return commands;
+    }
+    let active = match status.percentage {
+        0 => 0,
+        1..=33 => 1,
+        34..=66 => 2,
+        _ => 3,
+    };
+    for (index, height) in [4.0, 8.0, 12.0].into_iter().enumerate() {
+        commands.push(rounded(
+            Rect::new(
+                icon.origin.x + 11.0 + index as f32 * 5.0,
+                icon.origin.y + (18.0 - height) / 2.0,
+                2.0,
+                height,
+            ),
+            if index < active {
+                style.text
+            } else {
+                Color(78, 70, 91, 255)
+            },
+            1.0,
+        ));
+    }
+    commands
+}
+
+fn brightness_icon(bounds: Rect, status: BrightnessSnapshot, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 20.0, 20.0);
+    let center_size = 6.0 + f32::from(status.percentage.min(100)) * 0.04;
+    let center = Rect::new(
+        icon.origin.x + (20.0 - center_size) / 2.0,
+        icon.origin.y + (20.0 - center_size) / 2.0,
+        center_size,
+        center_size,
+    );
+    vec![
+        rounded(center, style.text, center_size / 2.0),
+        rounded(
+            Rect::new(icon.origin.x + 9.0, icon.origin.y, 2.0, 4.0),
+            style.text,
+            1.0,
+        ),
+        rounded(
+            Rect::new(icon.origin.x + 9.0, icon.origin.y + 16.0, 2.0, 4.0),
+            style.text,
+            1.0,
+        ),
+        rounded(
+            Rect::new(icon.origin.x, icon.origin.y + 9.0, 4.0, 2.0),
+            style.text,
+            1.0,
+        ),
+        rounded(
+            Rect::new(icon.origin.x + 16.0, icon.origin.y + 9.0, 4.0, 2.0),
+            style.text,
+            1.0,
+        ),
+    ]
+}
+
+fn network_icon(bounds: Rect, status: NetworkSnapshot, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 23.0, 18.0);
+    match status {
+        NetworkSnapshot::Wifi { percentage } => {
+            let active = match percentage {
+                0 => 0,
+                1..=25 => 1,
+                26..=50 => 2,
+                51..=75 => 3,
+                _ => 4,
+            };
+            (0..4)
+                .map(|index| {
+                    let height = 4.0 + index as f32 * 4.0;
+                    rounded(
+                        Rect::new(
+                            icon.origin.x + index as f32 * 6.0,
+                            icon.origin.y + 18.0 - height,
+                            4.0,
+                            height,
+                        ),
+                        if index < active {
+                            style.text
+                        } else {
+                            Color(78, 70, 91, 255)
+                        },
+                        1.5,
+                    )
+                })
+                .collect()
+        }
+        NetworkSnapshot::Disconnected => (0..4)
+            .map(|index| {
+                let height = 4.0 + index as f32 * 4.0;
+                rounded(
+                    Rect::new(
+                        icon.origin.x + index as f32 * 6.0,
+                        icon.origin.y + 18.0 - height,
+                        4.0,
+                        height,
+                    ),
+                    Color(91, 64, 78, 255),
+                    1.5,
+                )
+            })
+            .collect(),
+        NetworkSnapshot::Wired => vec![
+            rounded(
+                Rect::new(icon.origin.x + 1.0, icon.origin.y + 3.0, 8.0, 6.0),
+                style.text,
+                1.5,
+            ),
+            fill(
+                Rect::new(icon.origin.x + 8.0, icon.origin.y + 5.0, 7.0, 2.0),
+                style.text,
+            ),
+            rounded(
+                Rect::new(icon.origin.x + 14.0, icon.origin.y + 9.0, 8.0, 6.0),
+                style.text,
+                1.5,
+            ),
+            fill(
+                Rect::new(icon.origin.x + 14.0, icon.origin.y + 6.0, 2.0, 4.0),
+                style.text,
+            ),
+        ],
+        NetworkSnapshot::Other => vec![
+            rounded(
+                Rect::new(icon.origin.x + 4.0, icon.origin.y + 1.0, 15.0, 15.0),
+                style.text,
+                7.5,
+            ),
+            rounded(
+                Rect::new(icon.origin.x + 7.0, icon.origin.y + 4.0, 9.0, 9.0),
+                style.background,
+                4.5,
+            ),
+            rounded(
+                Rect::new(icon.origin.x + 10.0, icon.origin.y + 7.0, 3.0, 3.0),
+                style.accent,
+                1.5,
+            ),
+        ],
+    }
+}
+
+fn centered_icon(bounds: Rect, width: f32, height: f32) -> Rect {
+    Rect::new(
+        bounds.origin.x + (bounds.size.width - width) / 2.0,
+        bounds.origin.y + (bounds.size.height - height) / 2.0,
+        width,
+        height,
+    )
+}
+
+fn fill(bounds: Rect, color: Color) -> DrawCommand {
+    DrawCommand::Fill { bounds, color }
+}
+
+fn rounded(bounds: Rect, color: Color, radius: f32) -> DrawCommand {
+    DrawCommand::RoundedFill {
+        bounds,
+        color,
+        radius,
+    }
+}
+
 fn current_clock() -> String {
     let now = Local::now();
     format_clock(now.hour(), now.minute())
@@ -256,8 +479,17 @@ fn format_clock(hour: u32, minute: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DemoBar, format_clock};
-    use patin::{platform::Shell, ui::Size};
+    use super::{
+        BarStyle, DemoBar, battery_icon, brightness_icon, format_clock, network_icon, volume_icon,
+    };
+    use patin::{
+        platform::Shell,
+        ui::{DrawCommand, Rect, Size},
+    };
+    use patin_service_brightness::BrightnessSnapshot;
+    use patin_service_network::NetworkSnapshot;
+    use patin_service_upower::BatterySnapshot;
+    use patin_service_volume::VolumeSnapshot;
 
     #[test]
     fn formats_clock_with_leading_zeroes() {
@@ -275,5 +507,66 @@ mod tests {
         bar.take_damage();
         assert!(!bar.activate_at((20.0, 16.0)));
         assert!(bar.take_damage().is_empty());
+    }
+
+    #[test]
+    fn status_icons_use_shapes_and_change_with_state() {
+        let bounds = Rect::new(0.0, 0.0, 64.0, 32.0);
+        let style = BarStyle::default();
+        let low_battery = battery_icon(
+            bounds,
+            BatterySnapshot {
+                percentage: 10,
+                charging: false,
+            },
+            style,
+        );
+        let charged_battery = battery_icon(
+            bounds,
+            BatterySnapshot {
+                percentage: 90,
+                charging: true,
+            },
+            style,
+        );
+        let icons = [
+            low_battery.clone(),
+            volume_icon(
+                bounds,
+                VolumeSnapshot {
+                    percentage: 55,
+                    muted: false,
+                },
+                style,
+            ),
+            brightness_icon(bounds, BrightnessSnapshot { percentage: 60 }, style),
+            network_icon(bounds, NetworkSnapshot::Wifi { percentage: 75 }, style),
+        ];
+
+        assert!(
+            icons
+                .iter()
+                .flatten()
+                .all(|command| !matches!(command, DrawCommand::Text { .. }))
+        );
+        assert_ne!(low_battery, charged_battery);
+        assert_ne!(
+            volume_icon(
+                bounds,
+                VolumeSnapshot {
+                    percentage: 55,
+                    muted: false,
+                },
+                style,
+            ),
+            volume_icon(
+                bounds,
+                VolumeSnapshot {
+                    percentage: 55,
+                    muted: true,
+                },
+                style,
+            )
+        );
     }
 }

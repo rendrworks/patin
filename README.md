@@ -65,9 +65,10 @@ The example connects to the compositor selected by `WAYLAND_DISPLAY`, creates
 a top layer-shell bar, and demonstrates layout, rendering, scaling, and
 damage. Its clock and its battery, volume, brightness, and network status
 providers are fixtures for proving toolkit behavior, not built-in Patin
-components. The bar has no interactive element of its own right now — pointer
-and touch input still reach `Shell::activate_at`, they just have nothing to
-act on.
+components. Status values are rendered as small dependency-free vector icons;
+only the time remains textual. The bar has no interactive element of its own
+right now — pointer and touch input still reach `Shell::activate_at`, they just
+have nothing to act on.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.

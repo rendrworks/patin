@@ -1,6 +1,6 @@
 //! Composes Patin's optional service-adapter crates into one snapshot for
 //! the demo bar's row layout. Owning this composition (which providers to
-//! poll and how to format them) is the demo's job, not the toolkit's.
+//! poll and how to present them) is the demo's job, not the toolkit's.
 
 use patin::service::Provider;
 use patin_service_brightness::{BacklightProvider, BrightnessSnapshot};
@@ -10,10 +10,10 @@ use patin_service_volume::{VolumeProvider, VolumeSnapshot};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StatusSnapshot {
-    pub battery: Option<String>,
-    pub volume: Option<String>,
-    pub brightness: Option<String>,
-    pub network: Option<String>,
+    pub battery: Option<BatterySnapshot>,
+    pub volume: Option<VolumeSnapshot>,
+    pub brightness: Option<BrightnessSnapshot>,
+    pub network: Option<NetworkSnapshot>,
 }
 
 pub struct SystemStatus {
@@ -35,39 +35,10 @@ impl SystemStatus {
 
     pub fn poll(&mut self) -> StatusSnapshot {
         StatusSnapshot {
-            battery: self.battery.poll().map(format_battery),
-            volume: self.volume.poll().map(format_volume),
-            brightness: self.brightness.poll().map(format_brightness),
-            network: self.network.poll().map(format_network),
+            battery: self.battery.poll(),
+            volume: self.volume.poll(),
+            brightness: self.brightness.poll(),
+            network: self.network.poll(),
         }
-    }
-}
-
-fn format_battery(snapshot: BatterySnapshot) -> String {
-    if snapshot.charging {
-        format!("BAT {}%+", snapshot.percentage)
-    } else {
-        format!("BAT {}%", snapshot.percentage)
-    }
-}
-
-fn format_volume(snapshot: VolumeSnapshot) -> String {
-    if snapshot.muted {
-        "VOL MUTE".into()
-    } else {
-        format!("VOL {}%", snapshot.percentage)
-    }
-}
-
-fn format_brightness(snapshot: BrightnessSnapshot) -> String {
-    format!("BRI {}%", snapshot.percentage)
-}
-
-fn format_network(snapshot: NetworkSnapshot) -> String {
-    match snapshot {
-        NetworkSnapshot::Disconnected => "NET OFF".into(),
-        NetworkSnapshot::Wired => "NET ETH".into(),
-        NetworkSnapshot::Wifi { percentage } => format!("NET {percentage}%"),
-        NetworkSnapshot::Other => "NET UP".into(),
     }
 }

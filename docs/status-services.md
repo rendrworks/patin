@@ -19,8 +19,9 @@ specifically for status bars — via `zbus`'s blocking API, fetching the
 such as `BAT0` or on a hardware model. A missing system bus or UPower
 service returns `None`.
 
-The display format is `BAT 55%`; a `State` of charging or fully charged
-appends `+`.
+The demo renders the percentage as the fill level of a battery outline. Low
+battery uses a warning color and charging uses the Patin accent; no percentage
+or name is drawn.
 
 ## Volume
 
@@ -32,8 +33,9 @@ interface, so `crates/patin-service-volume`'s `VolumeProvider` (see
 2. `pactl get-sink-volume @DEFAULT_SINK@` plus `get-sink-mute`.
 
 This supports a native PipeWire default sink and the common PulseAudio
-compatibility service. Failure of both commands returns `None`. The display
-format is `VOL 55%`, or `VOL MUTE` when muted.
+compatibility service. Failure of both commands returns `None`. The demo maps
+the percentage to zero through three sound bars; mute replaces them with a
+warning-colored strike.
 
 ## Brightness
 
@@ -43,7 +45,7 @@ so `crates/patin-service-brightness`'s `BacklightProvider` reads Linux's
 documented `/sys/class/backlight` ABI directly: it discovers entries, reads
 `brightness` and `max_brightness`, and returns a percentage. It does not
 assume a driver or panel name. A missing or invalid backlight entry returns
-`None`. The display format is `BRI n%`.
+`None`. The demo draws a sun whose center grows with the reported level.
 
 ## Network
 
@@ -60,8 +62,9 @@ Cellular signal detail is out of scope: `ModemManager` is a separate D-Bus
 service with its own object model, so a primary connection type other than
 wifi/wired (including `gsm`/`cdma`) just reports as generically connected.
 
-The display format is `NET 55%` for wifi, `NET ETH` for wired, `NET OFF`
-when disconnected, or `NET UP` for anything else connected.
+The demo draws four strength bars for wifi, a linked-node icon for wired, dim
+bars when disconnected, and a generic connected ring for other connection
+types.
 
 ## Polling
 
@@ -69,6 +72,12 @@ The demo's `Shell::update` polls all four providers once per platform
 update. Unchanged values produce no redraw; changed values damage only
 their component. A provider's snapshot appearing or disappearing changes
 row membership and damages the full bar.
+
+`examples/demo_bar/services.rs` preserves the adapters' structured snapshot
+types instead of formatting strings. `examples/demo_bar/scene.rs` owns all
+icon choices and builds them from existing `Fill` and `RoundedFill` commands,
+so neither the toolkit nor service crates prescribe a visual style or require
+an icon font.
 
 All four adapters are poll-based today, reusing the same once-per-second
 tick. A future push-only service (notifications, media) will need a way to
