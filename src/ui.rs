@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
     pub x: f32,
@@ -149,6 +151,12 @@ pub enum DrawCommand {
         bounds: Rect,
         color: Color,
         radius: f32,
+    },
+    Image {
+        bounds: Rect,
+        width: u32,
+        height: u32,
+        rgba: Arc<[u8]>,
     },
     Text {
         bounds: Rect,

@@ -7,20 +7,19 @@ use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel};
 
 fn main() -> ExitCode {
     let applications = apps::discover();
+    let icon_count = applications
+        .iter()
+        .filter(|application| application.icon.is_some())
+        .count();
     eprintln!(
-        "patin-launcher: discovered {} launchable applications",
-        applications.len()
+        "patin-launcher: discovered {} launchable applications ({icon_count} resolved icons)",
+        applications.len(),
     );
     let config = LayerConfig {
         namespace: "patin-launcher".into(),
         layer: LayerLevel::Overlay,
-        anchors: Anchors {
-            top: true,
-            bottom: true,
-            left: true,
-            right: true,
-        },
-        size: (0, 0),
+        anchors: Anchors::default(),
+        size: (380, 540),
         exclusive_zone: 0,
         keyboard: KeyboardPolicy::None,
     };

@@ -77,19 +77,18 @@ and pass both to `patin::platform::run`.
 ### Install and run the application launcher
 
 The launcher is an optional composition, not toolkit startup behavior. It
-discovers visible freedesktop desktop entries, displays their names in a simple
-paged list, and closes after successfully spawning the tapped application:
+discovers visible freedesktop desktop entries, displays them in a compact
+floating list, and closes after successfully spawning the tapped application:
 
 ```sh
 ./scripts/install-launcher-user.sh
 patin-launcher
 ```
 
-The list deliberately resembles a terminal running `fzf`: a near-black
-background with compact monospace application names directly underneath each
-other. There are no cards, icons, title bar, or close button. Tap either half of
-the plain page footer to change pages, empty background to dismiss it, and an
-application line to launch it. On 0xin, the existing configurable shell
+The unanchored `380×540` layer surface is centered by the compositor instead of
+covering the output. It contains a simple vertical list with an XDG application
+icon and name per row. Drag vertically on touch or use a pointer wheel to
+scroll; tap a row to launch it. On 0xin, the existing configurable shell
 gestures can replace Fuzzel without adding a compositor-specific code path to
 Patin:
 

@@ -52,6 +52,12 @@ standard with enough edge cases that a narrow parser is safer and cheaper than
 reimplementing them. The dependency belongs to the launcher crate only; the
 Patin toolkit and other consumers do not inherit it.
 
+The launcher additionally uses `image` 0.25.10 with only its PNG feature and
+`resvg` 0.47.0 with all default features disabled. They decode PNG and render
+SVG application icons found through standard XDG data and icon locations,
+without enabling resvg's text, system-font, or raster-image features. Entries
+without a usable icon receive a neutral fallback.
+
 The toolkit does not require a battery, backlight, or audio command. The demo
 optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and
 `pactl`; missing providers merely remove those demo labels.

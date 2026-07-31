@@ -5,10 +5,11 @@ use patin::{
 
 use crate::apps::Application;
 
-const OUTER_MARGIN: f32 = 12.0;
-const LIST_MAX_WIDTH: f32 = 640.0;
-const FOOTER_HEIGHT: f32 = 32.0;
-const ROW_HEIGHT: f32 = 38.0;
+const PANEL_INSET: f32 = 2.0;
+const LIST_PADDING: f32 = 10.0;
+const ROW_HEIGHT: f32 = 44.0;
+const ICON_SIZE: f32 = 28.0;
+const SCROLL_STEP: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ListRow {
@@ -19,13 +20,10 @@ struct ListRow {
 pub struct Launcher {
     size: Size,
     applications: Vec<Application>,
-    page: usize,
-    page_size: usize,
-    page_count: usize,
-    list_bounds: Rect,
+    first_visible: usize,
+    visible_count: usize,
+    scroll_remainder: f64,
     rows: Vec<ListRow>,
-    previous_bounds: Option<Rect>,
-    next_bounds: Option<Rect>,
     close: bool,
     error: Option<String>,
     damage: Vec<Rect>,
@@ -36,13 +34,10 @@ impl Launcher {
         Self {
             size: Size::default(),
             applications,
-            page: 0,
-            page_size: 1,
-            page_count: 1,
-            list_bounds: Rect::default(),
+            first_visible: 0,
+            visible_count: 1,
+            scroll_remainder: 0.0,
             rows: Vec::new(),
-            previous_bounds: None,
-            next_bounds: None,
             close: false,
             error: None,
             damage: Vec::new(),
@@ -50,51 +45,23 @@ impl Launcher {
     }
 
     fn layout(&mut self) {
-        let list_width = (self.size.width - OUTER_MARGIN * 2.0).clamp(1.0, LIST_MAX_WIDTH);
-        let list_x = (self.size.width - list_width) / 2.0;
-        self.list_bounds = Rect::new(
-            list_x,
-            OUTER_MARGIN,
-            list_width,
-            (self.size.height - OUTER_MARGIN * 2.0).max(1.0),
-        );
-
-        let content_height = (self.list_bounds.size.height - FOOTER_HEIGHT).max(ROW_HEIGHT);
-        self.page_size = ((content_height / ROW_HEIGHT).floor() as usize).max(1);
-        self.page_count = self.applications.len().div_ceil(self.page_size).max(1);
-        self.page = self.page.min(self.page_count - 1);
-
-        let start = self.page * self.page_size;
-        let end = (start + self.page_size).min(self.applications.len());
-        self.rows = (start..end)
+        let content_height = (self.size.height - LIST_PADDING * 2.0).max(ROW_HEIGHT);
+        self.visible_count = ((content_height / ROW_HEIGHT).floor() as usize).max(1);
+        let max_first = self.applications.len().saturating_sub(self.visible_count);
+        self.first_visible = self.first_visible.min(max_first);
+        let end = (self.first_visible + self.visible_count).min(self.applications.len());
+        self.rows = (self.first_visible..end)
             .enumerate()
             .map(|(slot, application)| ListRow {
                 bounds: Rect::new(
-                    list_x,
-                    OUTER_MARGIN + slot as f32 * ROW_HEIGHT,
-                    list_width,
+                    LIST_PADDING,
+                    LIST_PADDING + slot as f32 * ROW_HEIGHT,
+                    (self.size.width - LIST_PADDING * 2.0).max(1.0),
                     ROW_HEIGHT,
                 ),
                 application,
             })
             .collect();
-
-        if self.page_count > 1 {
-            let y = OUTER_MARGIN + self.list_bounds.size.height - FOOTER_HEIGHT;
-            self.previous_bounds =
-                (self.page > 0).then(|| Rect::new(list_x, y, list_width / 2.0, FOOTER_HEIGHT));
-            self.next_bounds = (self.page + 1 < self.page_count).then(|| {
-                Rect::new(
-                    list_x + list_width / 2.0,
-                    y,
-                    list_width / 2.0,
-                    FOOTER_HEIGHT,
-                )
-            });
-        } else {
-            self.previous_bounds = None;
-            self.next_bounds = None;
-        }
     }
 
     fn damage_all(&mut self) {
@@ -116,24 +83,6 @@ impl Shell for Launcher {
     }
 
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
-        if self
-            .previous_bounds
-            .is_some_and(|bounds| bounds.contains(position))
-        {
-            self.page = self.page.saturating_sub(1);
-            self.layout();
-            self.damage_all();
-            return true;
-        }
-        if self
-            .next_bounds
-            .is_some_and(|bounds| bounds.contains(position))
-        {
-            self.page += 1;
-            self.layout();
-            self.damage_all();
-            return true;
-        }
         if let Some(row) = self.rows.iter().find(|row| row.bounds.contains(position)) {
             match self.applications[row.application].launch() {
                 Ok(()) => self.close = true,
@@ -149,72 +98,115 @@ impl Shell for Launcher {
         false
     }
 
+    fn scroll_by(&mut self, delta_y: f64) -> bool {
+        self.scroll_remainder += delta_y;
+        let steps = (self.scroll_remainder / SCROLL_STEP).trunc() as isize;
+        if steps == 0 {
+            return false;
+        }
+        self.scroll_remainder -= steps as f64 * SCROLL_STEP;
+        let max_first = self.applications.len().saturating_sub(self.visible_count);
+        let next = self
+            .first_visible
+            .saturating_add_signed(steps)
+            .min(max_first);
+        if next == self.first_visible {
+            return false;
+        }
+        self.first_visible = next;
+        self.layout();
+        self.damage_all();
+        true
+    }
+
     fn close_requested(&self) -> bool {
         self.close
     }
 
     fn commands(&self) -> Vec<DrawCommand> {
-        let mut commands = vec![fill(
-            Rect::new(0.0, 0.0, self.size.width, self.size.height),
-            Color(12, 12, 12, 248),
+        let mut commands = vec![rounded(
+            Rect::new(
+                PANEL_INSET,
+                PANEL_INSET,
+                (self.size.width - PANEL_INSET * 2.0).max(1.0),
+                (self.size.height - PANEL_INSET * 2.0).max(1.0),
+            ),
+            Color(27, 27, 30, 250),
+            12.0,
         )];
 
         for row in &self.rows {
             let application = &self.applications[row.application];
+            let icon_bounds = Rect::new(
+                row.bounds.origin.x + 6.0,
+                row.bounds.origin.y + (ROW_HEIGHT - ICON_SIZE) / 2.0,
+                ICON_SIZE,
+                ICON_SIZE,
+            );
+            if let Some(icon) = &application.icon {
+                commands.push(DrawCommand::Image {
+                    bounds: icon_bounds,
+                    width: icon.width,
+                    height: icon.height,
+                    rgba: icon.rgba.clone(),
+                });
+            } else {
+                commands.push(rounded(icon_bounds, Color(72, 72, 78, 255), 7.0));
+            }
             commands.push(text(
                 Rect::new(
-                    row.bounds.origin.x + 6.0,
+                    row.bounds.origin.x + 44.0,
                     row.bounds.origin.y,
-                    row.bounds.size.width - 12.0,
-                    row.bounds.size.height,
+                    row.bounds.size.width - 54.0,
+                    ROW_HEIGHT,
                 ),
                 &application.name,
-                16.0,
+                15.0,
                 TextAlign::Start,
-                Color(224, 224, 224, 255),
+                Color(238, 238, 241, 255),
             ));
         }
 
         if self.applications.is_empty() {
             commands.push(text(
                 Rect::new(
-                    self.list_bounds.origin.x,
-                    self.size.height * 0.42,
-                    self.list_bounds.size.width,
-                    60.0,
+                    LIST_PADDING,
+                    LIST_PADDING,
+                    self.size.width - 24.0,
+                    ROW_HEIGHT,
                 ),
-                "No launchable applications found",
-                17.0,
-                TextAlign::Center,
-                Color(183, 172, 198, 255),
+                "No applications found",
+                16.0,
+                TextAlign::Start,
+                Color(175, 175, 180, 255),
             ));
         }
         if let Some(error) = &self.error {
             commands.push(text(
                 Rect::new(
-                    self.list_bounds.origin.x + 8.0,
-                    self.list_bounds.origin.y,
-                    self.list_bounds.size.width - 16.0,
-                    ROW_HEIGHT,
+                    LIST_PADDING,
+                    self.size.height - 42.0,
+                    self.size.width - 32.0,
+                    34.0,
                 ),
                 error,
                 12.0,
                 TextAlign::Start,
-                Color(239, 140, 171, 255),
+                Color(245, 130, 150, 255),
             ));
         }
-        if self.page_count > 1 {
-            commands.push(text(
-                Rect::new(
-                    self.size.width / 2.0 - 50.0,
-                    self.list_bounds.origin.y + self.list_bounds.size.height - FOOTER_HEIGHT,
-                    100.0,
-                    40.0,
-                ),
-                &format!("‹    {} / {}    ›", self.page + 1, self.page_count),
-                13.0,
-                TextAlign::Center,
-                Color(170, 170, 170, 255),
+        if self.applications.len() > self.visible_count {
+            let track_height = self.size.height - LIST_PADDING * 2.0;
+            let thumb_height = (track_height * self.visible_count as f32
+                / self.applications.len() as f32)
+                .max(24.0);
+            let max_first = self.applications.len() - self.visible_count;
+            let thumb_y = LIST_PADDING
+                + (track_height - thumb_height) * self.first_visible as f32 / max_first as f32;
+            commands.push(rounded(
+                Rect::new(self.size.width - 6.0, thumb_y, 3.0, thumb_height),
+                Color(105, 105, 112, 220),
+                1.5,
             ));
         }
         commands
@@ -229,8 +221,12 @@ impl Shell for Launcher {
     }
 }
 
-fn fill(bounds: Rect, color: Color) -> DrawCommand {
-    DrawCommand::Fill { bounds, color }
+fn rounded(bounds: Rect, color: Color, radius: f32) -> DrawCommand {
+    DrawCommand::RoundedFill {
+        bounds,
+        color,
+        radius,
+    }
 }
 
 fn text(bounds: Rect, value: &str, font_size: f32, align: TextAlign, color: Color) -> DrawCommand {
@@ -240,17 +236,14 @@ fn text(bounds: Rect, value: &str, font_size: f32, align: TextAlign, color: Colo
         color,
         font_size,
         line_height: font_size * 1.25,
-        family: FontFamily::Monospace,
+        family: FontFamily::SansSerif,
         align,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use patin::{
-        platform::Shell,
-        ui::{Rect, Size},
-    };
+    use patin::{platform::Shell, ui::Size};
 
     use super::Launcher;
     use crate::apps::Application;
@@ -264,66 +257,43 @@ mod tests {
     }
 
     #[test]
-    fn phone_layout_pages_apps_and_keeps_rows_inside_output() {
+    fn fixed_window_lists_only_rows_that_fit() {
         let mut launcher = launcher(40);
         launcher.resize(Size {
-            width: 509.0,
-            height: 1020.0,
+            width: 380.0,
+            height: 540.0,
         });
-        assert!(launcher.page_count > 1);
+        assert_eq!(launcher.visible_count, 11);
+        assert_eq!(launcher.rows.len(), 11);
         assert!(launcher.rows.iter().all(|row| {
-            row.bounds.origin.x >= 0.0
-                && row.bounds.origin.y >= 0.0
-                && row.bounds.origin.x + row.bounds.size.width <= 509.0
-                && row.bounds.origin.y + row.bounds.size.height <= 1020.0
+            row.bounds.origin.y >= 0.0 && row.bounds.origin.y + row.bounds.size.height <= 540.0
         }));
     }
 
     #[test]
-    fn desktop_layout_keeps_the_list_narrow_and_centered() {
-        let mut launcher = launcher(5);
+    fn scrolling_moves_the_visible_window_and_clamps_at_each_end() {
+        let mut launcher = launcher(20);
         launcher.resize(Size {
-            width: 1920.0,
-            height: 1080.0,
+            width: 380.0,
+            height: 300.0,
         });
-        assert_eq!(launcher.list_bounds.size.width, 640.0);
-        assert_eq!(launcher.list_bounds.origin.x, 640.0);
-        assert!(
-            launcher
-                .rows
-                .iter()
-                .all(|row| row.bounds.size.width == 640.0)
-        );
-    }
-
-    #[test]
-    fn page_controls_and_empty_space_close_without_launching() {
-        let mut launcher = launcher(40);
-        launcher.resize(Size {
-            width: 509.0,
-            height: 1020.0,
-        });
-        let next = launcher.next_bounds.unwrap();
-        launcher.activate_at((next.origin.x as f64 + 1.0, next.origin.y as f64 + 1.0));
-        assert_eq!(launcher.page, 1);
-        assert!(!launcher.close_requested());
-
-        launcher.activate_at((1.0, 500.0));
-        assert!(launcher.close_requested());
+        assert!(launcher.scroll_by(60.0));
+        assert_eq!(launcher.first_visible, 2);
+        assert!(launcher.scroll_by(10_000.0));
+        assert_eq!(launcher.first_visible, 14);
+        assert!(!launcher.scroll_by(30.0));
+        assert!(launcher.scroll_by(-10_000.0));
+        assert_eq!(launcher.first_visible, 0);
     }
 
     #[test]
     fn empty_space_requests_composition_exit() {
         let mut launcher = launcher(1);
         launcher.resize(Size {
-            width: 1280.0,
-            height: 720.0,
+            width: 380.0,
+            height: 540.0,
         });
-        let Rect { origin, size } = launcher.rows[0].bounds;
-        launcher.activate_at((
-            origin.x as f64 + 1.0,
-            origin.y as f64 + size.height as f64 + 1.0,
-        ));
+        launcher.activate_at((20.0, 100.0));
         assert!(launcher.close_requested());
     }
 }

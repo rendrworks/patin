@@ -85,6 +85,9 @@ pub trait Shell {
     fn resize(&mut self, size: Size);
     fn update(&mut self) -> bool;
     fn activate_at(&mut self, position: (f64, f64)) -> bool;
+    fn scroll_by(&mut self, _delta_y: f64) -> bool {
+        false
+    }
     fn close_requested(&self) -> bool {
         false
     }
@@ -226,9 +229,17 @@ struct Patin {
     shell: Box<dyn Shell>,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
-    active_touches: Vec<(wl_touch::WlTouch, i32)>,
+    active_touches: Vec<ActiveTouch>,
     trace: bool,
     exit: bool,
+}
+
+struct ActiveTouch {
+    touch: wl_touch::WlTouch,
+    id: i32,
+    start: (f64, f64),
+    last: (f64, f64),
+    moved: bool,
 }
 
 impl Patin {
@@ -236,6 +247,12 @@ impl Patin {
         self.redraw_requested = true;
         if !self.frame_pending {
             self.draw(queue_handle);
+        }
+    }
+
+    fn scroll_by(&mut self, queue_handle: &QueueHandle<Self>, delta_y: f64) {
+        if self.shell.scroll_by(delta_y) {
+            self.request_redraw(queue_handle);
         }
     }
 
@@ -537,7 +554,7 @@ impl SeatHandler for Patin {
             Capability::Touch => {
                 for (_, touch) in self.touches.iter().filter(|(known, _)| known == &seat) {
                     self.active_touches
-                        .retain(|(active_touch, _)| active_touch != touch);
+                        .retain(|contact| &contact.touch != touch);
                 }
                 self.touches.retain(|(known, touch)| {
                     if known == &seat {
@@ -576,14 +593,23 @@ impl PointerHandler for Patin {
                 continue;
             }
 
-            if matches!(
-                event.kind,
+            match &event.kind {
                 PointerEventKind::Press {
-                    button: BTN_LEFT,
-                    ..
+                    button: BTN_LEFT, ..
+                } => self.activate_at(queue_handle, event.position),
+                PointerEventKind::Axis { vertical, .. } => {
+                    let delta = if vertical.value120 != 0 {
+                        f64::from(vertical.value120) * 48.0 / 120.0
+                    } else if vertical.discrete != 0 {
+                        f64::from(vertical.discrete) * 48.0
+                    } else {
+                        vertical.absolute
+                    };
+                    if delta != 0.0 {
+                        self.scroll_by(queue_handle, delta);
+                    }
                 }
-            ) {
-                self.activate_at(queue_handle, event.position);
+                _ => {}
             }
         }
     }
@@ -604,9 +630,15 @@ impl TouchHandler for Patin {
         if !self
             .active_touches
             .iter()
-            .any(|(known_touch, known_id)| known_touch == touch && *known_id == id)
+            .any(|contact| contact.touch == *touch && contact.id == id)
         {
-            self.active_touches.push((touch.clone(), id));
+            self.active_touches.push(ActiveTouch {
+                touch: touch.clone(),
+                id,
+                start: position,
+                last: position,
+                moved: false,
+            });
         }
         if self.trace {
             eprintln!(
@@ -615,22 +647,28 @@ impl TouchHandler for Patin {
             );
         }
 
-        if surface == *self.layer.wl_surface() {
-            self.activate_at(queue_handle, position);
-        }
+        let _ = (queue_handle, surface);
     }
 
     fn up(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
         id: i32,
     ) {
-        self.active_touches
-            .retain(|(known_touch, known_id)| known_touch != touch || *known_id != id);
+        let contact = self
+            .active_touches
+            .iter()
+            .position(|contact| contact.touch == *touch && contact.id == id)
+            .map(|index| self.active_touches.remove(index));
+        if let Some(contact) = contact
+            && !contact.moved
+        {
+            self.activate_at(queue_handle, contact.start);
+        }
         if self.trace {
             eprintln!(
                 "patin: touch contact {id} up; active contacts: {}",
@@ -642,12 +680,29 @@ impl TouchHandler for Patin {
     fn motion(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
+        queue_handle: &QueueHandle<Self>,
+        touch: &wl_touch::WlTouch,
         _time: u32,
-        _id: i32,
-        _position: (f64, f64),
+        id: i32,
+        position: (f64, f64),
     ) {
+        let mut delta = None;
+        if let Some(contact) = self
+            .active_touches
+            .iter_mut()
+            .find(|contact| contact.touch == *touch && contact.id == id)
+        {
+            if (position.0 - contact.start.0).hypot(position.1 - contact.start.1) >= 8.0 {
+                contact.moved = true;
+            }
+            if contact.moved {
+                delta = Some(contact.last.1 - position.1);
+            }
+            contact.last = position;
+        }
+        if let Some(delta) = delta {
+            self.scroll_by(queue_handle, delta);
+        }
     }
 
     fn shape(
@@ -678,7 +733,7 @@ impl TouchHandler for Patin {
         touch: &wl_touch::WlTouch,
     ) {
         self.active_touches
-            .retain(|(known_touch, _)| known_touch != touch);
+            .retain(|contact| contact.touch != *touch);
         if self.trace {
             eprintln!("patin: touch sequence cancelled");
         }

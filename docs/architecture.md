@@ -28,6 +28,10 @@ commands and damage, and decides how input positions affect its composition.
 Wayland buffer release and frame callbacks determine when storage can be reused
 and when another frame should be submitted.
 
+Finite and scrollable compositions use defaulted `Shell` lifecycle and
+vertical-scroll hooks. The platform translates pointer-axis input and touch
+drags into that capability; consumers that do not implement it are unchanged.
+
 Calloop dispatches the Wayland event queue and a general consumer update tick.
 SCTK owns protocol state and shared-memory slots. Configure, scale, input, or
 consumer updates can mark a surface for redraw; frame callbacks ensure Patin

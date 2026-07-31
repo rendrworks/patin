@@ -2,7 +2,10 @@ use cosmic_text::{
     Align, Attrs, Buffer as TextBuffer, Color as TextColor, Family, FontSystem, Metrics, Shaping,
     SwashCache, Weight,
 };
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect as SkiaRect, Transform};
+use tiny_skia::{
+    Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Rect as SkiaRect,
+    Transform,
+};
 
 use crate::ui::{DrawCommand, FontFamily, Rect, TextAlign};
 
@@ -102,6 +105,21 @@ impl CpuRenderer {
                         Transform::identity(),
                         None,
                     );
+                }
+                DrawCommand::Image {
+                    bounds,
+                    width,
+                    height,
+                    rgba,
+                } => {
+                    let bounds = physical_rect(*bounds, scale);
+                    let Some(source) = PixmapRef::from_bytes(rgba, *width, *height) else {
+                        continue;
+                    };
+                    let transform =
+                        Transform::from_scale(bounds.2 / *width as f32, bounds.3 / *height as f32)
+                            .post_translate(bounds.0, bounds.1);
+                    pixmap.draw_pixmap(0, 0, source, &PixmapPaint::default(), transform, None);
                 }
                 DrawCommand::Text {
                     bounds,

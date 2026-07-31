@@ -9,4 +9,6 @@ publish.workspace = true
 
 [dependencies]
 freedesktop-desktop-entry = { version = "=0.8.1", default-features = false }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 patin = { path = "../.." }
+resvg = { version = "=0.47.0", default-features = false }
