@@ -22,3 +22,4 @@
 - [Stage 7 — Session Lock](stages/stage-7-session-lock.md)
 - [Stage 7b — Selectable Keypad and Idle Blank/Wake](stages/stage-7b-keypad-and-blank.md)
 - [Stage 7c — Adaptive Lock-Screen Input](stages/stage-7c-lock-visual-polish.md)
+- [Stage 8a — Touch Application Launcher](stages/stage-8a-touch-launcher.md)

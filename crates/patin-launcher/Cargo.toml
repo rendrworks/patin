@@ -1,0 +1,12 @@
+[package]
+name = "patin-launcher"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A simple touch-friendly application list composed with Patin"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+freedesktop-desktop-entry = { version = "=0.8.1", default-features = false }
+patin = { path = "../.." }

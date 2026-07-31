@@ -128,6 +128,7 @@ pub struct Color(pub u8, pub u8, pub u8, pub u8);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextAlign {
+    Start,
     Center,
     End,
 }

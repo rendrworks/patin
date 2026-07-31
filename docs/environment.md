@@ -45,6 +45,13 @@ The UI core adds no external dependency. Its logical geometry, layout,
 styling, scene commands, hit-testing, and damage tracking are internal Rust
 modules built around demonstrated shell components.
 
+The optional `patin-launcher` composition uses
+`freedesktop-desktop-entry` 0.8.1 with default features disabled. Desktop-entry
+localization, visibility fields, XDG search paths, and `Exec` field codes are a
+standard with enough edge cases that a narrow parser is safer and cheaper than
+reimplementing them. The dependency belongs to the launcher crate only; the
+Patin toolkit and other consumers do not inherit it.
+
 The toolkit does not require a battery, backlight, or audio command. The demo
 optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and
 `pactl`; missing providers merely remove those demo labels.

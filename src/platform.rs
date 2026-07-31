@@ -85,6 +85,9 @@ pub trait Shell {
     fn resize(&mut self, size: Size);
     fn update(&mut self) -> bool;
     fn activate_at(&mut self, position: (f64, f64)) -> bool;
+    fn close_requested(&self) -> bool {
+        false
+    }
     fn commands(&self) -> Vec<DrawCommand>;
     fn take_damage(&mut self) -> Vec<Rect>;
     fn damage_all(&mut self);
@@ -183,10 +186,13 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
             if patin.shell.update() {
                 patin.redraw_requested = true;
             }
+            if patin.shell.close_requested() {
+                patin.exit = true;
+            }
             TimeoutAction::ToDuration(Duration::from_secs(1))
         },
     )?;
-    eprintln!("patin: connected; waiting for the compositor to configure the bar");
+    eprintln!("patin: connected; waiting for the compositor to configure the surface");
 
     while !patin.exit {
         event_loop.dispatch(None, &mut patin)?;
@@ -300,7 +306,10 @@ impl Patin {
     }
 
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
-        if self.shell.activate_at(position) {
+        let redraw = self.shell.activate_at(position);
+        if self.shell.close_requested() {
+            self.exit = true;
+        } else if redraw {
             self.request_redraw(queue_handle);
         }
     }

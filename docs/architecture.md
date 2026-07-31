@@ -14,7 +14,8 @@ Patin is a library organized around narrow shell-toolkit boundaries:
   ones it wants.
 - **Consumers** own components, services, and compositions. The demo bar is one
   consumer used to verify the library. `patin-lock` is another consumer and is
-  built/launched independently.
+  built/launched independently. `patin-launcher` is a third: an ordinary
+  overlay-layer consumer with no compositor-specific integration.
 - **Compositor integration** exposes workspace state and commands through a
   replaceable adapter. Its neutral implementation works without compositor
   IPC; a later 0xin adapter will use the documented control socket.
@@ -57,6 +58,9 @@ distinct across seats.
 The consumer supplies `LayerConfig`: namespace, layer level, anchors, logical
 size, exclusive zone, and keyboard policy. The demo chooses a top exclusive
 bar with keyboard policy `None`; the toolkit does not choose those values.
+Consumers may return `true` from `Shell::close_requested` when their lifecycle
+is complete. The platform then leaves its event loop cleanly; persistent
+compositions inherit the default `false` implementation.
 
 ## Session-lock composition
 

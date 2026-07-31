@@ -160,6 +160,7 @@ impl CpuRenderer {
                 .weight(Weight::SEMIBOLD),
             Shaping::Advanced,
             Some(match align {
+                TextAlign::Start => Align::Left,
                 TextAlign::Center => Align::Center,
                 TextAlign::End => Align::End,
             }),

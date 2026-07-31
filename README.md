@@ -41,6 +41,7 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
 - `patin-service-network` — connectivity state over D-Bus/NetworkManager.
+- `patin-launcher` — an independently launched, touch-friendly application list.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
 
@@ -72,6 +73,33 @@ have nothing to act on.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.
+
+### Install and run the application launcher
+
+The launcher is an optional composition, not toolkit startup behavior. It
+discovers visible freedesktop desktop entries, displays their names in a simple
+paged list, and closes after successfully spawning the tapped application:
+
+```sh
+./scripts/install-launcher-user.sh
+patin-launcher
+```
+
+The list deliberately resembles a terminal running `fzf`: a near-black
+background with compact monospace application names directly underneath each
+other. There are no cards, icons, title bar, or close button. Tap either half of
+the plain page footer to change pages, empty background to dismiss it, and an
+application line to launch it. On 0xin, the existing configurable shell
+gestures can replace Fuzzel without adding a compositor-specific code path to
+Patin:
+
+```ini
+gesture = top-down, spawn, pgrep -x patin-launcher >/dev/null || patin-launcher
+gesture = to-top, spawn, pkill -x patin-launcher
+```
+
+Other compositors can start the same binary from their own key or gesture
+configuration.
 
 ### Install and run the lock screen
 
