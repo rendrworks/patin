@@ -16,6 +16,8 @@ Patin is a library organized around narrow shell-toolkit boundaries:
   consumer used to verify the library. `patin-lock` is another consumer and is
   built/launched independently. `patin-launcher` is a third: an ordinary
   overlay-layer consumer with no compositor-specific integration.
+  `patin-session` is another finite overlay consumer; compositor-specific
+  logout commands are injected by its launching environment.
 - **Compositor integration** exposes workspace state and commands through a
   replaceable adapter. Its neutral implementation works without compositor
   IPC; a later 0xin adapter will use the documented control socket.

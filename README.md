@@ -44,6 +44,7 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-launcher` — an independently launched, touch-friendly application list.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
+- `patin-session` — a compact, compositor-neutral session action menu.
 
 A consumer depends on `patin` alone, or additionally on whichever adapter
 crates it wants; none are pulled in automatically.
@@ -103,6 +104,27 @@ gesture = to-top, spawn, pkill -x patin-launcher
 
 Other compositors can start the same binary from their own key or gesture
 configuration.
+
+### Install and run the session menu
+
+The optional session composition displays configured logout, reboot, and
+power-off actions in a compact floating panel. Its full-output surface is
+transparent outside the panel, and a tap there dismisses the menu without a
+Cancel row:
+
+```sh
+./scripts/install-session-user.sh
+PATIN_SESSION_LOGOUT_PROGRAM="$HOME/.local/bin/0xinctl" \
+PATIN_SESSION_LOGOUT_ARGUMENT=quit \
+PATIN_SESSION_LOGOUT_LABEL="Log out to Phrog" \
+patin-session
+```
+
+Reboot and power-off use `systemctl` directly. Logout is optional and supplied
+by the shell integration through environment variables, so the Patin binary
+does not depend on 0xin. The phone's existing `0xin-session-menu` wrapper can
+export those three variables and `exec patin-session`, leaving its 2-second
+power-button mapping unchanged.
 
 ### Install and run the lock screen
 

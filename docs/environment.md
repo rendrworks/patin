@@ -66,6 +66,13 @@ an incomplete remote-session `XDG_DATA_DIRS` cannot hide system icons. These
 dependencies remain launcher-only; entries without a usable icon receive a
 neutral fallback.
 
+The optional `patin-session` composition adds no dependency. It launches
+`systemctl reboot` and `systemctl poweroff` as separate program/argument values.
+A compositor integration may add its logout row with
+`PATIN_SESSION_LOGOUT_PROGRAM`, optional `PATIN_SESSION_LOGOUT_ARGUMENT`, and
+optional `PATIN_SESSION_LOGOUT_LABEL`; Patin never evaluates them through a
+shell.
+
 The toolkit does not require a battery, backlight, or audio command. The demo
 optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and
 `pactl`; missing providers merely remove those demo labels.

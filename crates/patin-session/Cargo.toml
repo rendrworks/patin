@@ -1,0 +1,11 @@
+[package]
+name = "patin-session"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A compact session action menu composed with Patin"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+patin = { path = "../.." }

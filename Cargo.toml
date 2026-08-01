@@ -23,6 +23,7 @@ patin-service-volume = { path = "crates/patin-service-volume" }
 members = [
     "crates/patin-launcher",
     "crates/patin-lock",
+    "crates/patin-session",
     "crates/patin-service-brightness",
     "crates/patin-service-network",
     "crates/patin-service-upower",
