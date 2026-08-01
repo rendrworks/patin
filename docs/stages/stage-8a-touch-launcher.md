@@ -30,11 +30,14 @@ overlay so the user can choose another app or dismiss it.
 
 ## Floating layout, icons, scrolling, and lifecycle
 
-The binary requests a `280×350` overlay-layer surface with no anchors, reserves
-no exclusive zone, and requests no keyboard. Layer-shell compositors center an
-unanchored fixed-size surface, so the launcher is a real floating window and
-the rest of the output is neither covered nor dimmed. `ui::Launcher::layout`
-places a single column of application rows inside the rounded dark surface.
+The binary requests a full-output overlay-layer surface anchored on every edge,
+reserves no exclusive zone, and requests no keyboard. Its buffer stays
+transparent except for a centered `280×350` panel, so the launcher looks
+floating and the rest of the output is not dimmed. The transparent part remains
+inside the surface's default input region: tapping it dismisses the launcher
+and consumes the tap instead of activating the application beneath.
+`ui::Launcher::layout` places a single column of application rows inside the
+rounded dark panel and centers that panel from runtime logical output size.
 The surface uses Patin's deep-purple bar/lock palette. Its ten visible lines
 use normal-weight 14px text and small 18px icons; there is no visible scrollbar
 or per-row decoration.
@@ -126,21 +129,23 @@ $ git diff --check
 ```
 
 Six launcher tests cover visible/hidden desktop entries, parsed launch
-arguments, reverse-DNS icon-name preservation, fixed-surface row containment,
-clamped scrolling, and clean close requests. A short local smoke run found 13
+arguments, reverse-DNS icon-name preservation, centered fixed-panel containment
+on a full-output surface, clamped scrolling, and outside-tap close requests. A
+short local smoke run found 13
 launchable applications and resolved 9 icons before reporting the expected
 `Could not find wayland compositor`, because the
 tool session does not inherit the laptop's graphical Wayland environment.
 
 The phone-native six-test suite and optimized build passed for the final
-`280×350` floating list. A timed live run discovered 33 applications, resolved
-32 installed theme icons with a neutral fallback for the remaining app, and
-connected to 0xin successfully:
+`280×350` floating list. After removing the stale Kitty desktop entry, a live
+run discovered 32 applications, resolved all 32 installed theme icons, connected
+to 0xin, and exited before its timeout when the transparent area outside the
+panel was tapped:
 
 ```text
 $ env -u LD_LIBRARY_PATH XDG_RUNTIME_DIR=/run/user/10000 \
-  WAYLAND_DISPLAY=wayland-0 timeout 15 ~/.local/bin/patin-launcher
-patin-launcher: discovered 33 launchable applications (32 resolved icons)
+  WAYLAND_DISPLAY=wayland-0 timeout 30 ~/.local/bin/patin-launcher
+patin-launcher: discovered 32 launchable applications (32 resolved icons)
 patin: connected; waiting for the compositor to configure the surface
 ```
 

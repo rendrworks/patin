@@ -18,8 +18,13 @@ fn main() -> ExitCode {
     let config = LayerConfig {
         namespace: "patin-launcher".into(),
         layer: LayerLevel::Overlay,
-        anchors: Anchors::default(),
-        size: (280, 350),
+        anchors: Anchors {
+            top: true,
+            bottom: true,
+            left: true,
+            right: true,
+        },
+        size: (0, 0),
         exclusive_zone: 0,
         keyboard: KeyboardPolicy::None,
     };

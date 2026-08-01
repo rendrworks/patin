@@ -85,9 +85,11 @@ floating list, and closes after successfully spawning the tapped application:
 patin-launcher
 ```
 
-The unanchored `280×350` layer surface is centered by the compositor instead of
-covering the output. It contains a simple vertical list with an XDG application
-icon and name per row. Drag vertically on touch or use a pointer wheel to
+The launcher uses a full-output transparent input surface but draws only a
+centered `280×350` panel. The surrounding output remains visually unchanged;
+tapping it dismisses the launcher without activating the application beneath.
+The panel contains a simple vertical list with an XDG application icon and name
+per row. Drag vertically on touch or use a pointer wheel to
 scroll through ten compact lines; tap a row to launch it. Its deep-purple
 palette matches the demo bar and lock screen rather than copying Fuzzel's
 colors. On 0xin, the existing configurable shell
