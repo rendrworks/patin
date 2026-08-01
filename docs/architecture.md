@@ -134,15 +134,16 @@ of self-intersecting on very small or very radius-heavy bounds.
 
 ```text
 Row
-├── Spacer (weighted fill)
-├── Optional status fixtures
-└── Clock (fixed preference)
+├── Clock (fixed left preference)
+├── Optional volume, brightness, and network fixtures (weighted fill)
+└── Optional battery fixture (fixed right preference)
 ```
 
-The example owns component state and styling. Optional battery, volume,
-brightness, and network fixtures join its row only when their providers
-return values. It emits a small command list and records logical damaged
-rectangles when state changes.
+The row sits inside a logical horizontal inset, so its two end components do
+not touch an output edge at any output scale. The example owns component state
+and styling. Optional battery, volume, brightness, and network fixtures join
+its row only when their providers return values. It emits a small command list
+and records logical damaged rectangles when state changes.
 Resize and scale changes damage the full bar; clock and status-fixture
 changes damage only their component bounds. The Wayland boundary converts
 those rectangles to outward-rounded physical buffer coordinates. The bar has

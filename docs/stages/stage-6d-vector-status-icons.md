@@ -32,9 +32,12 @@ The helpers use only existing `DrawCommand::Fill` and
 Wayland surface and avoids emoji rendering, private-use glyphs, bundled assets,
 or an icon-font dependency. The clock deliberately remains text.
 
-The existing layout, optional membership, and per-component damage behavior
-are unchanged. A value change alters its icon commands and damages only that
-status slot.
+The demo row keeps the textual clock in a fixed slot on the inset left edge and
+the optional battery icon in a compact fixed slot on the inset right edge.
+Volume, brightness, and network occupy flexible slots between them. The
+12-logical-pixel outer inset is scale independent: the Wayland backend applies
+the output scale later when it creates the buffer. A value change alters its
+icon commands and damages only that status slot.
 
 ## Changed files and important functions
 
@@ -42,7 +45,7 @@ status slot.
   converting them to labels.
 - `examples/demo_bar/scene.rs` renders `battery_icon`, `volume_icon`,
   `brightness_icon`, and `network_icon`, with shared centering and shape
-  helpers plus state-regression tests.
+  helpers plus state- and layout-regression tests.
 - `README.md` and `docs/status-services.md` describe the visible behavior and
   retain the toolkit/example boundary.
 - `docs/SUMMARY.md` links this chapter.
@@ -72,3 +75,42 @@ The automated demo test confirms that all four status components emit shape
 commands rather than text and that battery charging and volume mute produce
 different command sets. A live visual check on the phone test target remains
 to be recorded.
+
+The inset end layout was verified on 1 August 2026:
+
+```text
+$ cargo fmt --all -- --check
+(no output, exit 0)
+
+$ cargo test --workspace --all-targets
+28 passed, 0 failed
+
+$ cargo clippy --workspace --all-targets --all-features -- -D warnings
+Finished, no warnings
+
+$ mdbook build
+INFO HTML book written to `/home/vdzee/proj/patin/book`
+
+$ git diff --check
+(no output, exit 0)
+```
+
+The new regression test uses the phone's 509-by-32 logical bar size and checks
+that the clock starts at the left inset, all middle fixtures remain between the
+end components, and the battery slot ends at the right inset.
+
+The same revision was then built natively on the `aarch64` phone test target
+with its existing xkbcommon development path:
+
+```text
+$ cargo build --release --locked --example demo_bar
+Finished `release` profile; produced target/release/examples/demo_bar
+
+$ systemctl --user is-active patin-bar.service
+active
+```
+
+The installed `~/.local/bin/patin` remained active as a Wayland client after a
+fresh SSH connection. The transient user service was used only to preserve the
+live test process after SSH disconnected; normal session startup remains the
+documented `exec_once = ~/.local/bin/patin` compositor configuration.

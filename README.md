@@ -68,7 +68,9 @@ a top layer-shell bar, and demonstrates layout, rendering, scaling, and
 damage. Its clock and its battery, volume, brightness, and network status
 providers are fixtures for proving toolkit behavior, not built-in Patin
 components. Status values are rendered as small dependency-free vector icons;
-only the time remains textual. The bar has no interactive element of its own
+only the time remains textual. The clock occupies the inset left edge, the
+battery occupies the inset right edge, and the other available status fixtures
+share the space between them. The bar has no interactive element of its own
 right now — pointer and touch input still reach `Shell::activate_at`, they just
 have nothing to act on.
 

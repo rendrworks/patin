@@ -17,6 +17,7 @@ struct BarStyle {
     text: Color,
     padding: f32,
     gap: f32,
+    horizontal_inset: f32,
 }
 
 impl Default for BarStyle {
@@ -27,6 +28,7 @@ impl Default for BarStyle {
             text: Color(245, 243, 255, 255),
             padding: 5.0,
             gap: 8.0,
+            horizontal_inset: 12.0,
         }
     }
 }
@@ -77,8 +79,7 @@ impl DemoBar {
     }
 
     fn layout(&mut self) {
-        let status_count = [
-            self.battery.is_some(),
+        let middle_status_count = [
             self.volume.is_some(),
             self.brightness.is_some(),
             self.network.is_some(),
@@ -86,19 +87,24 @@ impl DemoBar {
         .into_iter()
         .filter(|present| *present)
         .count();
-        let mut lengths = vec![Length::Fill(1.0); status_count.max(1)];
-        lengths.push(Length::Fixed(72.0));
+        let mut lengths = vec![Length::Fixed(72.0)];
+        lengths.extend(vec![Length::Fill(1.0); middle_status_count.max(1)]);
+        if self.battery.is_some() {
+            lengths.push(Length::Fixed(40.0));
+        }
+        let content_width = (self.size.width - self.style.horizontal_inset * 2.0).max(0.0);
         let children = row(
-            Rect::new(0.0, 0.0, self.size.width, self.size.height),
+            Rect::new(
+                self.style.horizontal_inset,
+                0.0,
+                content_width,
+                self.size.height,
+            ),
             self.style.gap,
             &lengths,
         );
-        let mut index = 0;
-        self.battery_bounds = self.battery.as_ref().map(|_| {
-            let bounds = children[index];
-            index += 1;
-            bounds
-        });
+        self.clock_bounds = children[0];
+        let mut index = 1;
         self.volume_bounds = self.volume.as_ref().map(|_| {
             let bounds = children[index];
             index += 1;
@@ -114,7 +120,7 @@ impl DemoBar {
             index += 1;
             bounds
         });
-        self.clock_bounds = children[children.len() - 1];
+        self.battery_bounds = self.battery.as_ref().map(|_| children[children.len() - 1]);
     }
 
     fn set_status(
@@ -227,7 +233,7 @@ impl Shell for DemoBar {
             line_height: 20.0,
             family: FontFamily::Monospace,
             weight: FontWeight::Semibold,
-            align: TextAlign::End,
+            align: TextAlign::Start,
         });
         commands
     }
@@ -508,6 +514,35 @@ mod tests {
         bar.take_damage();
         assert!(!bar.activate_at((20.0, 16.0)));
         assert!(bar.take_damage().is_empty());
+    }
+
+    #[test]
+    fn clock_and_battery_use_inset_opposite_edges() {
+        let mut bar = DemoBar::new();
+        bar.set_status(
+            Some(BatterySnapshot {
+                percentage: 75,
+                charging: false,
+            }),
+            Some(VolumeSnapshot {
+                percentage: 50,
+                muted: false,
+            }),
+            Some(BrightnessSnapshot { percentage: 50 }),
+            Some(NetworkSnapshot::Wifi { percentage: 75 }),
+        );
+        bar.resize(Size {
+            width: 509.0,
+            height: 32.0,
+        });
+
+        let battery = bar.battery_bounds.expect("battery should have a slot");
+        assert_eq!(bar.clock_bounds.origin.x, bar.style.horizontal_inset);
+        assert!(bar.clock_bounds.origin.x < bar.volume_bounds.unwrap().origin.x);
+        assert!(bar.network_bounds.unwrap().origin.x < battery.origin.x);
+        let battery_right = battery.origin.x + battery.size.width;
+        let inset_right = bar.size.width - bar.style.horizontal_inset;
+        assert!((battery_right - inset_right).abs() < 0.001);
     }
 
     #[test]
