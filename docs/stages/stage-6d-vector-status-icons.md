@@ -14,37 +14,38 @@ data rather than presentation.
 ## Structured state through the scene
 
 `examples/demo_bar/services.rs::StatusSnapshot` now retains
-`BatterySnapshot`, `VolumeSnapshot`, `BrightnessSnapshot`, and
-`NetworkSnapshot` directly. Removing the demo's formatting functions avoids
-discarding useful state such as charging, mute, wired, and disconnected before
+`BatterySnapshot`, `VolumeSnapshot`, and `NetworkSnapshot` directly. Removing
+the demo's formatting functions avoids
+discarding useful state such as charging, mute, and transport strengths before
 the scene renders it.
 
-`examples/demo_bar/scene.rs` converts that state into four compact icons:
+`examples/demo_bar/scene.rs` converts that state into compact icons:
 
 - battery fill represents charge, with warning and charging colors;
 - zero through three bars represent volume, with a mute strike;
-- the center of a four-ray sun represents brightness;
-- strength bars, linked nodes, dim bars, or a ring represent wifi, wired,
-  disconnected, or other networking.
+- concentric signal arcs represent wifi, linked nodes represent wired, and
+  ascending bars represent cellular strength.
 
 The helpers use only existing `DrawCommand::Fill` and
 `DrawCommand::RoundedFill` primitives. This makes the icons scale with the
 Wayland surface and avoids emoji rendering, private-use glyphs, bundled assets,
 or an icon-font dependency. The clock deliberately remains text.
 
-The demo row keeps the textual clock in a fixed slot on the inset left edge and
-the optional battery icon in a compact fixed slot on the inset right edge.
-Volume, brightness, and network occupy flexible slots between them. The
-12-logical-pixel outer inset is scale independent: the Wayland backend applies
-the output scale later when it creates the buffer. A value change alters its
-icon commands and damages only that status slot.
+The demo row keeps the textual clock and optional volume icon in fixed slots
+growing inward from the inset left edge. Active wifi, wired, cellular, and
+battery indicators use fixed slots growing inward from the inset right edge. A flexible spacer between
+the clusters keeps the output center empty, avoiding centered obstructions
+without branching on a hardware or compositor name. The 12-logical-pixel outer
+inset is scale independent: the Wayland backend applies the output scale later
+when it creates the buffer. A value change alters its icon commands and damages
+only that status slot.
 
 ## Changed files and important functions
 
 - `examples/demo_bar/services.rs` preserves provider snapshots instead of
   converting them to labels.
 - `examples/demo_bar/scene.rs` renders `battery_icon`, `volume_icon`,
-  `brightness_icon`, and `network_icon`, with shared centering and shape
+  `wifi_icon`, `wired_icon`, and `cellular_icon`, with shared centering and shape
   helpers plus state- and layout-regression tests.
 - `README.md` and `docs/status-services.md` describe the visible behavior and
   retain the toolkit/example boundary.
@@ -96,8 +97,9 @@ $ git diff --check
 ```
 
 The new regression test uses the phone's 509-by-32 logical bar size and checks
-that the clock starts at the left inset, all middle fixtures remain between the
-end components, and the battery slot ends at the right inset.
+that the clock starts at the left inset, the battery slot ends at the right
+inset, and a 64-logical-pixel area around the output center contains no status
+slot.
 
 The same revision was then built natively on the `aarch64` phone test target
 with its existing xkbcommon development path:

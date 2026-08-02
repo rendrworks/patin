@@ -65,14 +65,17 @@ mdbook build
 
 The example connects to the compositor selected by `WAYLAND_DISPLAY`, creates
 a top layer-shell bar, and demonstrates layout, rendering, scaling, and
-damage. Its clock and its battery, volume, brightness, and network status
+damage. Its clock and its battery, volume, and network status
 providers are fixtures for proving toolkit behavior, not built-in Patin
 components. Status values are rendered as small dependency-free vector icons;
-only the time remains textual. The clock occupies the inset left edge, the
-battery occupies the inset right edge, and the other available status fixtures
-share the space between them. The bar has no interactive element of its own
-right now — pointer and touch input still reach `Shell::activate_at`, they just
-have nothing to act on.
+only the time remains textual. Wi-Fi and registered cellular service are
+independent indicators with their own signal strength, so both can appear at
+once; wired connectivity remains capability-driven as well. The clock and
+volume grow inward from the inset left edge; network transports and battery
+grow inward from the inset right edge. Flexible space between those clusters
+keeps the output center clear. The
+bar has no interactive element of its own right now — pointer and touch input
+still reach `Shell::activate_at`, they just have nothing to act on.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.

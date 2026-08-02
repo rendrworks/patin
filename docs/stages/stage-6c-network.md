@@ -1,5 +1,9 @@
 # Stage 6c — Network Service Adapter
 
+> This chapter records the original single-primary-connection stage. The
+> current simultaneous-transport snapshot is documented in
+> [Stage 6e](stage-6e-multi-transport-network.md).
+
 ## Why this stage exists
 
 Stage 6 had battery, volume, and brightness done. Network is next, and

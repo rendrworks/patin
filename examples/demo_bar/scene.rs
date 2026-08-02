@@ -3,7 +3,6 @@ use patin::{
     platform::Shell,
     ui::{Color, DrawCommand, FontFamily, FontWeight, Length, Rect, Size, TextAlign, row},
 };
-use patin_service_brightness::BrightnessSnapshot;
 use patin_service_network::NetworkSnapshot;
 use patin_service_upower::BatterySnapshot;
 use patin_service_volume::VolumeSnapshot;
@@ -38,12 +37,12 @@ pub struct DemoBar {
     style: BarStyle,
     battery_bounds: Option<Rect>,
     volume_bounds: Option<Rect>,
-    brightness_bounds: Option<Rect>,
-    network_bounds: Option<Rect>,
+    wifi_bounds: Option<Rect>,
+    wired_bounds: Option<Rect>,
+    cellular_bounds: Option<Rect>,
     clock_bounds: Rect,
     battery: Option<BatterySnapshot>,
     volume: Option<VolumeSnapshot>,
-    brightness: Option<BrightnessSnapshot>,
     network: Option<NetworkSnapshot>,
     clock: String,
     damage: Vec<Rect>,
@@ -55,20 +54,20 @@ impl DemoBar {
         let mut status = SystemStatus::new();
         let snapshot = status.poll();
         eprintln!(
-            "demo_bar: status providers: battery={:?}, volume={:?}, brightness={:?}, network={:?}",
-            snapshot.battery, snapshot.volume, snapshot.brightness, snapshot.network
+            "demo_bar: status providers: battery={:?}, volume={:?}, network={:?}",
+            snapshot.battery, snapshot.volume, snapshot.network
         );
         let mut bar = Self {
             size: Size::default(),
             style: BarStyle::default(),
             battery_bounds: None,
             volume_bounds: None,
-            brightness_bounds: None,
-            network_bounds: None,
+            wifi_bounds: None,
+            wired_bounds: None,
+            cellular_bounds: None,
             clock_bounds: Rect::default(),
             battery: snapshot.battery,
             volume: snapshot.volume,
-            brightness: snapshot.brightness,
             network: snapshot.network,
             clock: current_clock(),
             damage: Vec::new(),
@@ -79,16 +78,21 @@ impl DemoBar {
     }
 
     fn layout(&mut self) {
-        let middle_status_count = [
-            self.volume.is_some(),
-            self.brightness.is_some(),
-            self.network.is_some(),
-        ]
-        .into_iter()
-        .filter(|present| *present)
-        .count();
+        let network = self.network.unwrap_or_default();
         let mut lengths = vec![Length::Fixed(72.0)];
-        lengths.extend(vec![Length::Fill(1.0); middle_status_count.max(1)]);
+        if self.volume.is_some() {
+            lengths.push(Length::Fixed(40.0));
+        }
+        lengths.push(Length::Fill(1.0));
+        if network.wifi.is_some() {
+            lengths.push(Length::Fixed(40.0));
+        }
+        if network.wired {
+            lengths.push(Length::Fixed(40.0));
+        }
+        if network.cellular.is_some() {
+            lengths.push(Length::Fixed(40.0));
+        }
         if self.battery.is_some() {
             lengths.push(Length::Fixed(40.0));
         }
@@ -110,12 +114,18 @@ impl DemoBar {
             index += 1;
             bounds
         });
-        self.brightness_bounds = self.brightness.as_ref().map(|_| {
+        index += 1;
+        self.wifi_bounds = network.wifi.map(|_| {
             let bounds = children[index];
             index += 1;
             bounds
         });
-        self.network_bounds = self.network.as_ref().map(|_| {
+        self.wired_bounds = network.wired.then(|| {
+            let bounds = children[index];
+            index += 1;
+            bounds
+        });
+        self.cellular_bounds = network.cellular.map(|_| {
             let bounds = children[index];
             index += 1;
             bounds
@@ -127,27 +137,19 @@ impl DemoBar {
         &mut self,
         battery: Option<BatterySnapshot>,
         volume: Option<VolumeSnapshot>,
-        brightness: Option<BrightnessSnapshot>,
         network: Option<NetworkSnapshot>,
     ) -> bool {
-        if self.battery == battery
-            && self.volume == volume
-            && self.brightness == brightness
-            && self.network == network
-        {
+        if self.battery == battery && self.volume == volume && self.network == network {
             return false;
         }
         let layout_changed = self.battery.is_some() != battery.is_some()
             || self.volume.is_some() != volume.is_some()
-            || self.brightness.is_some() != brightness.is_some()
-            || self.network.is_some() != network.is_some();
+            || network_membership(self.network) != network_membership(network);
         let battery_changed = self.battery != battery;
         let volume_changed = self.volume != volume;
-        let brightness_changed = self.brightness != brightness;
         let network_changed = self.network != network;
         self.battery = battery;
         self.volume = volume;
-        self.brightness = brightness;
         self.network = network;
         if layout_changed {
             self.layout();
@@ -159,15 +161,25 @@ impl DemoBar {
             if volume_changed && let Some(bounds) = self.volume_bounds {
                 self.damage.push(bounds);
             }
-            if brightness_changed && let Some(bounds) = self.brightness_bounds {
-                self.damage.push(bounds);
-            }
-            if network_changed && let Some(bounds) = self.network_bounds {
-                self.damage.push(bounds);
+            if network_changed {
+                self.damage.extend(
+                    [self.wifi_bounds, self.wired_bounds, self.cellular_bounds]
+                        .into_iter()
+                        .flatten(),
+                );
             }
         }
         true
     }
+}
+
+fn network_membership(network: Option<NetworkSnapshot>) -> (bool, bool, bool) {
+    let network = network.unwrap_or_default();
+    (
+        network.wifi.is_some(),
+        network.wired,
+        network.cellular.is_some(),
+    )
 }
 
 impl Shell for DemoBar {
@@ -188,12 +200,7 @@ impl Shell for DemoBar {
             changed = true;
         }
         let snapshot = self.status.poll();
-        self.set_status(
-            snapshot.battery,
-            snapshot.volume,
-            snapshot.brightness,
-            snapshot.network,
-        ) || changed
+        self.set_status(snapshot.battery, snapshot.volume, snapshot.network) || changed
     }
 
     fn activate_at(&mut self, _position: (f64, f64)) -> bool {
@@ -219,11 +226,22 @@ impl Shell for DemoBar {
         if let (Some(bounds), Some(status)) = (self.volume_bounds, self.volume) {
             commands.extend(volume_icon(bounds, status, self.style));
         }
-        if let (Some(bounds), Some(status)) = (self.brightness_bounds, self.brightness) {
-            commands.extend(brightness_icon(bounds, status, self.style));
+        if let (Some(bounds), Some(percentage)) = (
+            self.wifi_bounds,
+            self.network.and_then(|network| network.wifi),
+        ) {
+            commands.extend(wifi_icon(bounds, percentage, self.style));
         }
-        if let (Some(bounds), Some(status)) = (self.network_bounds, self.network) {
-            commands.extend(network_icon(bounds, status, self.style));
+        if let (Some(bounds), Some(network)) = (self.wired_bounds, self.network)
+            && network.wired
+        {
+            commands.extend(wired_icon(bounds, self.style));
+        }
+        if let (Some(bounds), Some(percentage)) = (
+            self.cellular_bounds,
+            self.network.and_then(|network| network.cellular),
+        ) {
+            commands.extend(cellular_icon(bounds, percentage, self.style));
         }
         commands.push(DrawCommand::Text {
             bounds: self.clock_bounds.inset(self.style.padding),
@@ -334,124 +352,116 @@ fn volume_icon(bounds: Rect, status: VolumeSnapshot, style: BarStyle) -> Vec<Dra
     commands
 }
 
-fn brightness_icon(bounds: Rect, status: BrightnessSnapshot, style: BarStyle) -> Vec<DrawCommand> {
-    let icon = centered_icon(bounds, 20.0, 20.0);
-    let center_size = 6.0 + f32::from(status.percentage.min(100)) * 0.04;
-    let center = Rect::new(
-        icon.origin.x + (20.0 - center_size) / 2.0,
-        icon.origin.y + (20.0 - center_size) / 2.0,
-        center_size,
-        center_size,
+fn wifi_icon(bounds: Rect, percentage: u8, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 24.0, 24.0);
+    let inactive = Color(78, 70, 91, 255);
+    let mut commands = Vec::new();
+    wifi_arc(
+        &mut commands,
+        icon,
+        3.0,
+        if percentage >= 67 {
+            style.text
+        } else {
+            inactive
+        },
+        style.background,
     );
+    wifi_arc(
+        &mut commands,
+        icon.inset(4.0),
+        3.0,
+        if percentage >= 34 {
+            style.text
+        } else {
+            inactive
+        },
+        style.background,
+    );
+    commands.push(rounded(
+        Rect::new(icon.origin.x + 10.0, icon.origin.y + 15.0, 4.0, 4.0),
+        style.text,
+        2.0,
+    ));
+    commands
+}
+
+fn cellular_icon(bounds: Rect, percentage: u8, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 22.0, 18.0);
+    let active = match percentage {
+        0 => 0,
+        1..=25 => 1,
+        26..=50 => 2,
+        51..=75 => 3,
+        _ => 4,
+    };
+    (0..4)
+        .map(|index| {
+            let height = 4.0 + index as f32 * 4.0;
+            rounded(
+                Rect::new(
+                    icon.origin.x + index as f32 * 6.0,
+                    icon.origin.y + 18.0 - height,
+                    4.0,
+                    height,
+                ),
+                if index < active {
+                    style.text
+                } else {
+                    Color(78, 70, 91, 255)
+                },
+                1.5,
+            )
+        })
+        .collect()
+}
+
+fn wired_icon(bounds: Rect, style: BarStyle) -> Vec<DrawCommand> {
+    let icon = centered_icon(bounds, 23.0, 18.0);
     vec![
-        rounded(center, style.text, center_size / 2.0),
         rounded(
-            Rect::new(icon.origin.x + 9.0, icon.origin.y, 2.0, 4.0),
+            Rect::new(icon.origin.x + 1.0, icon.origin.y + 3.0, 8.0, 6.0),
             style.text,
-            1.0,
+            1.5,
+        ),
+        fill(
+            Rect::new(icon.origin.x + 8.0, icon.origin.y + 5.0, 7.0, 2.0),
+            style.text,
         ),
         rounded(
-            Rect::new(icon.origin.x + 9.0, icon.origin.y + 16.0, 2.0, 4.0),
+            Rect::new(icon.origin.x + 14.0, icon.origin.y + 9.0, 8.0, 6.0),
             style.text,
-            1.0,
+            1.5,
         ),
-        rounded(
-            Rect::new(icon.origin.x, icon.origin.y + 9.0, 4.0, 2.0),
+        fill(
+            Rect::new(icon.origin.x + 14.0, icon.origin.y + 6.0, 2.0, 4.0),
             style.text,
-            1.0,
-        ),
-        rounded(
-            Rect::new(icon.origin.x + 16.0, icon.origin.y + 9.0, 4.0, 2.0),
-            style.text,
-            1.0,
         ),
     ]
 }
 
-fn network_icon(bounds: Rect, status: NetworkSnapshot, style: BarStyle) -> Vec<DrawCommand> {
-    let icon = centered_icon(bounds, 23.0, 18.0);
-    match status {
-        NetworkSnapshot::Wifi { percentage } => {
-            let active = match percentage {
-                0 => 0,
-                1..=25 => 1,
-                26..=50 => 2,
-                51..=75 => 3,
-                _ => 4,
-            };
-            (0..4)
-                .map(|index| {
-                    let height = 4.0 + index as f32 * 4.0;
-                    rounded(
-                        Rect::new(
-                            icon.origin.x + index as f32 * 6.0,
-                            icon.origin.y + 18.0 - height,
-                            4.0,
-                            height,
-                        ),
-                        if index < active {
-                            style.text
-                        } else {
-                            Color(78, 70, 91, 255)
-                        },
-                        1.5,
-                    )
-                })
-                .collect()
-        }
-        NetworkSnapshot::Disconnected => (0..4)
-            .map(|index| {
-                let height = 4.0 + index as f32 * 4.0;
-                rounded(
-                    Rect::new(
-                        icon.origin.x + index as f32 * 6.0,
-                        icon.origin.y + 18.0 - height,
-                        4.0,
-                        height,
-                    ),
-                    Color(91, 64, 78, 255),
-                    1.5,
-                )
-            })
-            .collect(),
-        NetworkSnapshot::Wired => vec![
-            rounded(
-                Rect::new(icon.origin.x + 1.0, icon.origin.y + 3.0, 8.0, 6.0),
-                style.text,
-                1.5,
-            ),
-            fill(
-                Rect::new(icon.origin.x + 8.0, icon.origin.y + 5.0, 7.0, 2.0),
-                style.text,
-            ),
-            rounded(
-                Rect::new(icon.origin.x + 14.0, icon.origin.y + 9.0, 8.0, 6.0),
-                style.text,
-                1.5,
-            ),
-            fill(
-                Rect::new(icon.origin.x + 14.0, icon.origin.y + 6.0, 2.0, 4.0),
-                style.text,
-            ),
-        ],
-        NetworkSnapshot::Other => vec![
-            rounded(
-                Rect::new(icon.origin.x + 4.0, icon.origin.y + 1.0, 15.0, 15.0),
-                style.text,
-                7.5,
-            ),
-            rounded(
-                Rect::new(icon.origin.x + 7.0, icon.origin.y + 4.0, 9.0, 9.0),
-                style.background,
-                4.5,
-            ),
-            rounded(
-                Rect::new(icon.origin.x + 10.0, icon.origin.y + 7.0, 3.0, 3.0),
-                style.accent,
-                1.5,
-            ),
-        ],
-    }
+fn wifi_arc(
+    commands: &mut Vec<DrawCommand>,
+    bounds: Rect,
+    thickness: f32,
+    color: Color,
+    background: Color,
+) {
+    commands.push(rounded(bounds, color, bounds.size.width / 2.0));
+    commands.push(rounded(
+        bounds.inset(thickness),
+        background,
+        (bounds.size.width / 2.0 - thickness).max(0.0),
+    ));
+    commands.push(fill(
+        Rect::new(
+            bounds.origin.x,
+            bounds.origin.y + bounds.size.height / 2.0,
+            bounds.size.width,
+            bounds.size.height / 2.0,
+        ),
+        background,
+    ));
 }
 
 fn centered_icon(bounds: Rect, width: f32, height: f32) -> Rect {
@@ -487,13 +497,12 @@ fn format_clock(hour: u32, minute: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BarStyle, DemoBar, battery_icon, brightness_icon, format_clock, network_icon, volume_icon,
+        BarStyle, DemoBar, battery_icon, cellular_icon, format_clock, volume_icon, wifi_icon,
     };
     use patin::{
         platform::Shell,
         ui::{DrawCommand, Rect, Size},
     };
-    use patin_service_brightness::BrightnessSnapshot;
     use patin_service_network::NetworkSnapshot;
     use patin_service_upower::BatterySnapshot;
     use patin_service_volume::VolumeSnapshot;
@@ -517,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_and_battery_use_inset_opposite_edges() {
+    fn status_clusters_leave_the_output_center_clear() {
         let mut bar = DemoBar::new();
         bar.set_status(
             Some(BatterySnapshot {
@@ -528,8 +537,11 @@ mod tests {
                 percentage: 50,
                 muted: false,
             }),
-            Some(BrightnessSnapshot { percentage: 50 }),
-            Some(NetworkSnapshot::Wifi { percentage: 75 }),
+            Some(NetworkSnapshot {
+                wifi: Some(75),
+                cellular: Some(55),
+                wired: false,
+            }),
         );
         bar.resize(Size {
             width: 509.0,
@@ -537,9 +549,13 @@ mod tests {
         });
 
         let battery = bar.battery_bounds.expect("battery should have a slot");
+        let output_center = bar.size.width / 2.0;
         assert_eq!(bar.clock_bounds.origin.x, bar.style.horizontal_inset);
         assert!(bar.clock_bounds.origin.x < bar.volume_bounds.unwrap().origin.x);
-        assert!(bar.network_bounds.unwrap().origin.x < battery.origin.x);
+        assert!(bar.volume_bounds.unwrap().origin.x < output_center - 32.0);
+        assert!(bar.wifi_bounds.unwrap().origin.x > output_center + 32.0);
+        assert!(bar.wifi_bounds.unwrap().origin.x < bar.cellular_bounds.unwrap().origin.x);
+        assert!(bar.cellular_bounds.unwrap().origin.x < battery.origin.x);
         let battery_right = battery.origin.x + battery.size.width;
         let inset_right = bar.size.width - bar.style.horizontal_inset;
         assert!((battery_right - inset_right).abs() < 0.001);
@@ -575,8 +591,8 @@ mod tests {
                 },
                 style,
             ),
-            brightness_icon(bounds, BrightnessSnapshot { percentage: 60 }, style),
-            network_icon(bounds, NetworkSnapshot::Wifi { percentage: 75 }, style),
+            wifi_icon(bounds, 75, style),
+            cellular_icon(bounds, 55, style),
         ];
 
         assert!(
@@ -586,6 +602,11 @@ mod tests {
                 .all(|command| !matches!(command, DrawCommand::Text { .. }))
         );
         assert_ne!(low_battery, charged_battery);
+        assert_ne!(wifi_icon(bounds, 20, style), wifi_icon(bounds, 80, style));
+        assert_ne!(
+            cellular_icon(bounds, 20, style),
+            cellular_icon(bounds, 80, style)
+        );
         assert_ne!(
             volume_icon(
                 bounds,

@@ -4,7 +4,8 @@ Battery, volume, brightness, and network are each an optional, opt-in
 toolkit crate implementing `patin::service::Provider` (see
 [Architecture](architecture.md#service-adapters)), not code inside the
 `patin` library or a demo-only fixture. `examples/demo_bar/services.rs`
-composes all four into one `StatusSnapshot` for its row layout — that
+composes battery, volume, and network into one `StatusSnapshot` for its row
+layout — that
 composition, and the row's dynamic membership/damage behavior, remains the
 demo's own job. A missing provider does not prevent the example from
 starting.
@@ -45,30 +46,29 @@ so `crates/patin-service-brightness`'s `BacklightProvider` reads Linux's
 documented `/sys/class/backlight` ABI directly: it discovers entries, reads
 `brightness` and `max_brightness`, and returns a percentage. It does not
 assume a driver or panel name. A missing or invalid backlight entry returns
-`None`. The demo draws a sun whose center grows with the reported level.
+`None`. The adapter remains available to other compositions, but the current
+demo bar deliberately does not instantiate it.
 
 ## Network
 
 `crates/patin-service-network`'s `NetworkProvider` (see
-[Stage 6c](stages/stage-6c-network.md)) reads NetworkManager over D-Bus —
-`PrimaryConnection` (an object path, `"/"` when there is none) and
-`PrimaryConnectionType`. A wifi primary connection additionally walks
+[Stage 6e](stages/stage-6e-multi-transport-network.md)) reads every active
+NetworkManager connection over D-Bus. A wifi connection additionally walks
 `ActiveConnection.Devices` → `Device.Wireless.ActiveAccessPoint` →
-`AccessPoint.Strength` for a signal percentage. `Provider::poll` returning
-`None` means only "NetworkManager is unreachable over D-Bus" — being
-reachable but disconnected is a real reading of its own.
+`AccessPoint.Strength` for a signal percentage; ethernet sets the independent
+`wired` field.
 
-Cellular signal detail is out of scope: `ModemManager` is a separate D-Bus
-service with its own object model, so a primary connection type other than
-wifi/wired (including `gsm`/`cdma`) just reports as generically connected.
+The same provider discovers modem objects through ModemManager's standard
+ObjectManager interface. A registered modem contributes its independent
+`SignalQuality` percentage. This represents simultaneous wifi and SIM service
+without treating VPN or loopback connections as physical transports.
 
-The demo draws four strength bars for wifi, a linked-node icon for wired, dim
-bars when disconnected, and a generic connected ring for other connection
-types.
+The demo draws a wifi fan, a linked-node icon for wired, and cellular strength
+bars. Only active/registered transport icons receive slots.
 
 ## Polling
 
-The demo's `Shell::update` polls all four providers once per platform
+The demo's `Shell::update` polls its three providers once per platform
 update. Unchanged values produce no redraw; changed values damage only
 their component. A provider's snapshot appearing or disappearing changes
 row membership and damages the full bar.

@@ -135,15 +135,20 @@ of self-intersecting on very small or very radius-heavy bounds.
 ```text
 Row
 ├── Clock (fixed left preference)
-├── Optional volume, brightness, and network fixtures (weighted fill)
-└── Optional battery fixture (fixed right preference)
+├── Optional volume fixture (fixed left preference)
+├── Empty center (weighted fill)
+├── Optional wifi, wired, and cellular fixtures (fixed right preferences)
+└── Optional battery fixture (fixed right edge preference)
 ```
 
 The row sits inside a logical horizontal inset, so its two end components do
-not touch an output edge at any output scale. The example owns component state
-and styling. Optional battery, volume, brightness, and network fixtures join
-its row only when their providers return values. It emits a small command list
-and records logical damaged rectangles when state changes.
+not touch an output edge at any output scale. Fixed-width components grow
+inward from both edges while a flexible spacer consumes the center. This keeps
+content away from centered output obstructions without naming or detecting a
+specific device. The example owns component state and styling. Optional
+battery, volume, and individual network-transport fixtures join its row only when their
+providers return values. It emits a small command list and records logical
+damaged rectangles when state changes.
 Resize and scale changes damage the full bar; clock and status-fixture
 changes damage only their component bounds. The Wayland boundary converts
 those rectangles to outward-rounded physical buffer coordinates. The bar has
@@ -173,12 +178,11 @@ owns the domain outright:
 - `crates/patin-service-upower` polls UPower's `DisplayDevice` — the
   synthetic aggregate battery device UPower maintains for shells — over
   `zbus`'s blocking API.
-- `crates/patin-service-network` polls NetworkManager the same way:
-  `PrimaryConnection`/`PrimaryConnectionType`, plus a short D-Bus walk to an
-  access point's `Strength` for wifi. It reports a real "disconnected"
-  reading (`Some(NetworkSnapshot::Disconnected)`) rather than folding that
-  into `None` — `None` there means only "NetworkManager unreachable",
-  matching how battery's snapshot always carries a real `charging` reading.
+- `crates/patin-service-network` polls NetworkManager's active connections
+  plus access-point strength for wifi and wired state. It independently reads
+  registered modem signal from ModemManager, allowing wifi and cellular fields
+  to be populated simultaneously. Missing transports remain `None`/`false`
+  inside a real snapshot; an unavailable system bus returns `None`.
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in
   [Status Providers](status-services.md)), so they shell out to

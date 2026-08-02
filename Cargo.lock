@@ -952,7 +952,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-text",
- "patin-service-brightness",
  "patin-service-network",
  "patin-service-upower",
  "patin-service-volume",
