@@ -52,7 +52,11 @@ crates it wants; none are pulled in automatically.
 ## Build and verify
 
 Patin uses ordinary stable Rust and pins the exact toolchain in
-`rust-toolchain.toml`.
+`rust-toolchain.toml`. A full workspace build also needs the xkbcommon and PAM
+development packages (`libxkbcommon-dev` and `libpam0g-dev` on Debian/Ubuntu).
+They provide the native metadata, headers, and linker inputs used by
+`smithay-client-toolkit` and `patin-lock`; CI installs them before invoking
+Cargo.
 
 ```sh
 cargo build --workspace

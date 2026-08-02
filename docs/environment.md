@@ -179,6 +179,19 @@ Generated Cargo output (`target/`) and book output (`book/`) are ignored.
 
 ## Required checks
 
+On Debian/Ubuntu, prepare a fresh build environment with the workspace's native
+dependencies before running the checks:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes libpam0g-dev libxkbcommon-dev
+```
+
+The GitHub Actions check job performs this setup explicitly. In particular,
+`libxkbcommon-dev` installs `xkbcommon.pc`, which SCTK's build script locates
+through `pkg-config`; the runtime library by itself is not enough to compile
+the crate.
+
 Every milestone runs:
 
 ```sh

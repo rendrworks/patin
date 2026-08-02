@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libpam0g-dev libxkbcommon-dev
+
       - name: Select pinned Rust toolchain
         run: rustup show
 
@@ -30,4 +33,3 @@ jobs:
 
       - name: Build documentation
         run: mdbook build
-
