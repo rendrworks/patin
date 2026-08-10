@@ -88,11 +88,15 @@ matching page.
 
 NetworkManager remains the system daemon; Patin is its frontend. The separate
 composition scans and joins Wi-Fi, toggles mobile data, and manages one
-persistent hotspot profile with editable SSID, password, security, and band:
+persistent hotspot profile with editable SSID, password, security, and band.
+Wi-Fi, Cellular, and Hotspot are separate tabs and can each be selected at
+startup:
 
 ```sh
 ./scripts/install-network-settings-user.sh
 patin-network-settings --page=wifi
+patin-network-settings --page=cellular
+patin-network-settings --page=hotspot
 ```
 
 Profile operations use NetworkManager's `nmcli` client. PolicyKit remains

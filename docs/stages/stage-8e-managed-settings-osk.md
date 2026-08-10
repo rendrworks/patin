@@ -33,9 +33,11 @@ session-level request.
 ## Composition behavior
 
 `patin-network-settings` is an XDG toplevel with app ID
-`patin-network-settings`. Selecting an SSID or password field advertises the
-matching text-input purpose and visibly marks the edited value. Enter submits,
-Escape cancels, and page changes or close requests end text input.
+`patin-network-settings`. Wi-Fi, Cellular, and Hotspot are independent tabs;
+the optional `--page=` argument can open any one directly. Selecting a Wi-Fi
+password or a hotspot SSID/password field advertises the matching text-input
+purpose and visibly marks the edited value. Enter submits, Escape cancels, and
+page changes or close requests end text input.
 
 Launcher search is deliberately not part of this stage. It will become the
 next consumer of the same window/text-input boundary without importing lock
@@ -48,7 +50,7 @@ Local verification on 2026-08-10:
 ```text
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
-  35 passed; 0 failed
+  36 passed; 0 failed
 cargo clippy --workspace --all-targets --all-features -- -D warnings
   finished successfully
 mdbook build

@@ -15,6 +15,7 @@ const ROW: f32 = 52.0;
 enum Page {
     Wifi,
     Cellular,
+    Hotspot,
 }
 
 #[derive(Clone, Debug)]
@@ -22,6 +23,7 @@ enum Action {
     Close,
     WifiPage,
     CellularPage,
+    HotspotPage,
     ToggleWifi,
     ToggleCellular,
     Connect(usize),
@@ -73,10 +75,10 @@ impl NetworkSettings {
         let hotspot = provider.hotspot_config();
         let mut settings = Self {
             size: Size::default(),
-            page: if page == Some("cellular") {
-                Page::Cellular
-            } else {
-                Page::Wifi
+            page: match page {
+                Some("cellular") => Page::Cellular,
+                Some("hotspot") => Page::Hotspot,
+                _ => Page::Wifi,
             },
             provider,
             snapshot,
@@ -99,20 +101,21 @@ impl NetworkSettings {
         let width = self.size.width.clamp(1.0, 520.0);
         let left = (self.size.width - width) / 2.0;
         self.button(Rect::new(left + 12.0, 14.0, 48.0, 40.0), "‹", Action::Close);
+        let tab_width = (width - 90.0) / 3.0;
         self.button(
-            Rect::new(left + 72.0, 14.0, (width - 90.0) / 2.0, 40.0),
+            Rect::new(left + 72.0, 14.0, tab_width, 40.0),
             "Wi-Fi",
             Action::WifiPage,
         );
         self.button(
-            Rect::new(
-                left + 72.0 + (width - 90.0) / 2.0,
-                14.0,
-                (width - 90.0) / 2.0,
-                40.0,
-            ),
+            Rect::new(left + 72.0 + tab_width, 14.0, tab_width, 40.0),
             "Cellular",
             Action::CellularPage,
+        );
+        self.button(
+            Rect::new(left + 72.0 + tab_width * 2.0, 14.0, tab_width, 40.0),
+            "Hotspot",
+            Action::HotspotPage,
         );
         let mut y = 70.0;
         match self.page {
@@ -151,6 +154,17 @@ impl NetworkSettings {
                     );
                     y += ROW + 6.0;
                 }
+            }
+            Page::Cellular => self.button(
+                Rect::new(left + 16.0, y, width - 32.0, ROW),
+                if self.snapshot.cellular_enabled {
+                    "Mobile data: on"
+                } else {
+                    "Mobile data: off"
+                },
+                Action::ToggleCellular,
+            ),
+            Page::Hotspot => {
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
                     if self.snapshot.hotspot_active {
@@ -212,15 +226,6 @@ impl NetworkSettings {
                     Action::SaveHotspot,
                 );
             }
-            Page::Cellular => self.button(
-                Rect::new(left + 16.0, y, width - 32.0, ROW),
-                if self.snapshot.cellular_enabled {
-                    "Mobile data: on"
-                } else {
-                    "Mobile data: off"
-                },
-                Action::ToggleCellular,
-            ),
         }
     }
 
@@ -294,6 +299,11 @@ impl NetworkSettings {
             }
             Action::CellularPage => {
                 self.page = Page::Cellular;
+                self.editing = None;
+                self.redraw();
+            }
+            Action::HotspotPage => {
+                self.page = Page::Hotspot;
                 self.editing = None;
                 self.redraw();
             }
@@ -500,6 +510,33 @@ mod tests {
     #[test]
     fn requested_page_is_selected() {
         assert_eq!(NetworkSettings::new(Some("cellular")).page, Page::Cellular);
+        assert_eq!(NetworkSettings::new(Some("hotspot")).page, Page::Hotspot);
+        assert_eq!(NetworkSettings::new(Some("unknown")).page, Page::Wifi);
+    }
+
+    #[test]
+    fn hotspot_controls_are_only_on_the_hotspot_page() {
+        let wifi = NetworkSettings::new(Some("wifi"));
+        assert!(
+            !wifi
+                .buttons
+                .iter()
+                .any(|button| matches!(button.action, Action::ToggleHotspot))
+        );
+
+        let hotspot = NetworkSettings::new(Some("hotspot"));
+        assert!(
+            hotspot
+                .buttons
+                .iter()
+                .any(|button| matches!(button.action, Action::ToggleHotspot))
+        );
+        assert!(
+            !hotspot
+                .buttons
+                .iter()
+                .any(|button| matches!(button.action, Action::ToggleWifi))
+        );
     }
     #[test]
     fn escape_closes_when_not_editing() {

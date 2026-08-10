@@ -25,16 +25,19 @@ PolicyKit denials, are returned to the UI.
 
 ## Composition
 
-`patin-network-settings` was initially a separate overlay process. Its Wi-Fi page provides
-radio control, scan/connect/disconnect/forget, and one persistent `Patin
-Hotspot` profile using AP mode and IPv4 sharing. SSID, password, open or
-WPA-personal security, and automatic/2.4/5 GHz band are editable. Its Cellular
-page provides the NetworkManager mobile-data toggle and registration state.
+`patin-network-settings` was initially a separate overlay process. Its Wi-Fi
+page provides radio control and scan/connect/disconnect/forget. Cellular has a
+separate page for the NetworkManager mobile-data toggle and registration
+state. Hotspot also has its own page for one persistent `Patin Hotspot`
+profile using AP mode and IPv4 sharing; SSID, password, open or WPA-personal
+security, and automatic/2.4/5 GHz band are editable. Stage 8e later changed
+the process into a managed XDG toplevel without coupling it to 0xin.
 
 The demo bar retains dim Wi-Fi and cellular slots when the relevant runtime
 capability exists. Tapping a slot launches `--page=wifi` or `--page=cellular`,
 with at most one child per bar. `PATIN_NETWORK_SETTINGS_PROGRAM` can replace
-the executable; no 0xin-specific code is involved.
+the executable; `--page=hotspot` is available to other launchers and all three
+pages remain reachable through tabs. No 0xin-specific code is involved.
 
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
 hotspots, and a PolicyKit agent are later work.
