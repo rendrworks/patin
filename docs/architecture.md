@@ -164,11 +164,16 @@ example-only detail. None of this is exported by `src/lib.rs` or ever
 constructed by `platform::run`.
 
 Reusable presentation assets follow the same opt-in boundary. The
-`patin-icons` workspace crate converts semantic states such as unavailable,
-poor, medium, and good Wi-Fi into ordinary `DrawCommand` values. The core
-toolkit does not depend on it, and neither a bar nor any other composition owns
-the shared glyph. The demo bar and network settings independently choose the
-crate and supply palettes appropriate to their own surfaces.
+`patin-icons` workspace crate converts semantic states into ordinary
+`DrawCommand` values. Wi-Fi has unavailable, poor, medium, and good states;
+volume has off, low, medium, and high states. The core toolkit does not depend
+on it, and neither a bar nor any other composition owns the shared glyphs. The
+demo bar and network settings independently choose the crate and supply
+palettes appropriate to their own surfaces.
+
+The demo bar contains no status-icon drawing helpers. It maps provider values
+to icon states and composes the resulting battery, volume, Wi-Fi, wired, and
+cellular commands around its clock.
 
 ## Service adapters
 
@@ -194,10 +199,10 @@ owns the domain outright:
   It also exposes explicit essential controls. NetworkManager's `nmcli`
   frontend performs profile-heavy mutations so persistent settings and secrets
   remain owned by NetworkManager. Saved infrastructure profiles are merged
-  with cached access points so unavailable profiles remain visible; hotspot
-  profiles in AP mode are excluded. The adapter uses each access point's D-Bus
-  `LastSeen` timestamp rather than assuming every cached object is still in
-  range.
+  with cached access points; hotspot profiles in AP mode are excluded. The
+  adapter uses each access point's D-Bus `LastSeen` timestamp rather than
+  assuming every cached object is still in range. Settings retains unavailable
+  profiles in its model for rediscovery but renders only available rows.
 
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in

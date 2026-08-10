@@ -31,7 +31,6 @@ enum Action {
     ScanWifi,
     ToggleCellular,
     Connect(usize),
-    UnavailableWifi,
     Disconnect,
     Forget(usize),
     EditHotspotSsid,
@@ -186,8 +185,15 @@ impl NetworkSettings {
                 let row_capacity =
                     ((self.size.height - y + 6.0).max(0.0) / (ROW + 6.0)).floor() as usize;
                 let max_rows = row_capacity.min(if self.editing.is_some() { 2 } else { 5 });
-                for index in 0..self.networks.len().min(max_rows) {
-                    let network = self.networks[index].clone();
+                let visible_networks = self
+                    .networks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, network)| network.available)
+                    .take(max_rows)
+                    .map(|(index, network)| (index, network.clone()))
+                    .collect::<Vec<_>>();
+                for (index, network) in visible_networks {
                     let forget_width = 82.0;
                     let row_width = width - 32.0;
                     let main_width = if network.known {
@@ -196,14 +202,8 @@ impl NetworkSettings {
                         row_width
                     };
                     let main_bounds = Rect::new(left + 16.0, y, main_width, ROW);
-                    let signal = if network.available {
-                        WifiSignal::from_percentage(network.strength)
-                    } else {
-                        WifiSignal::Unavailable
-                    };
-                    let label = if !network.available {
-                        format!("{} • unavailable", network.ssid)
-                    } else if network.active {
+                    let signal = WifiSignal::from_percentage(network.strength);
+                    let label = if network.active {
                         format!("{} • connected", network.ssid)
                     } else {
                         network.ssid.clone()
@@ -212,16 +212,7 @@ impl NetworkSettings {
                         Rect::new(main_bounds.origin.x + 8.0, y + 14.0, 24.0, 24.0),
                         signal,
                     ));
-                    self.indented_button(
-                        main_bounds,
-                        &label,
-                        if network.available {
-                            Action::Connect(index)
-                        } else {
-                            Action::UnavailableWifi
-                        },
-                        42.0,
-                    );
+                    self.indented_button(main_bounds, &label, Action::Connect(index), 42.0);
                     if network.known {
                         self.centered_button(
                             Rect::new(left + 16.0 + row_width - forget_width, y, forget_width, ROW),
@@ -495,7 +486,6 @@ impl NetworkSettings {
                     }
                 }
             }
-            Action::UnavailableWifi => {}
             Action::EditHotspotSsid => {
                 self.editing = Some(Editing::HotspotSsid);
                 self.redraw();
@@ -683,6 +673,7 @@ impl Shell for NetworkSettings {
                     foreground: Color(245, 243, 255, 255),
                     muted: Color(112, 102, 132, 255),
                     background: Color(57, 48, 75, 255),
+                    accent: Color(124, 58, 237, 255),
                     unavailable: Color(239, 96, 119, 255),
                 },
             ));
@@ -891,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn known_network_rows_show_availability_icons_and_fit_forget() {
+    fn unavailable_known_network_rows_stay_hidden() {
         let mut ui = NetworkSettings::new(Some("wifi"));
         ui.initial_refresh_pending = false;
         ui.networks = vec![WifiNetwork {
@@ -907,22 +898,11 @@ mod tests {
             height: 480.0,
         });
 
-        assert_eq!(ui.wifi_icons[0].1, WifiSignal::Unavailable);
-        let network = ui
-            .buttons
-            .iter()
-            .find(|button| matches!(button.action, Action::UnavailableWifi))
-            .unwrap();
-        let forget = ui
-            .buttons
-            .iter()
-            .find(|button| matches!(button.action, Action::Forget(0)))
-            .unwrap();
-        assert!(network.label.contains("unavailable"));
-        assert!(forget.bounds.size.width >= 82.0);
+        assert!(ui.wifi_icons.is_empty());
         assert!(
-            forget.bounds.origin.x + forget.bounds.size.width
-                <= ui.size.width - 16.0 + f32::EPSILON
+            !ui.buttons
+                .iter()
+                .any(|button| matches!(button.action, Action::Connect(_) | Action::Forget(_)))
         );
     }
 
@@ -951,6 +931,16 @@ mod tests {
         assert_eq!(row.label, "DELTA • connected");
         assert!(!row.label.contains('%'));
         assert_eq!(ui.wifi_icons[0].1, WifiSignal::Good);
+        let forget = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::Forget(0)))
+            .unwrap();
+        assert!(forget.bounds.size.width >= 82.0);
+        assert!(
+            forget.bounds.origin.x + forget.bounds.size.width
+                <= ui.size.width - 16.0 + f32::EPSILON
+        );
     }
 
     #[test]

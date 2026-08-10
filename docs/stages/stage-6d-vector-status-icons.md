@@ -8,9 +8,10 @@ they made a 32-logical-pixel shell bar feel like a test fixture rather than a
 compact status surface.
 
 This stage originally changed only the demo composition. Stage 8f later moved
-the Wi-Fi glyph into the optional `patin-icons` crate so multiple consumers can
-reuse it. Patin still does not ship a bar, and service adapters still return
-data rather than presentation.
+the Wi-Fi glyph into the optional `patin-icons` crate, and Stage 8g moved every
+remaining status glyph while adding an explicit audio-off state. Patin still
+does not ship a bar, and service adapters still return data rather than
+presentation.
 
 ## Structured state through the scene
 
@@ -45,8 +46,9 @@ only that status slot.
 
 - `examples/demo_bar/services.rs` preserves provider snapshots instead of
   converting them to labels.
-- `examples/demo_bar/scene.rs` renders the battery, volume, wired, and cellular
-  glyphs locally. Its original Wi-Fi helper moved to `patin-icons` in Stage 8f.
+- `examples/demo_bar/scene.rs` originally rendered all five glyphs locally.
+  Wi-Fi moved to `patin-icons` in Stage 8f; battery, volume, wired, and cellular
+  followed in Stage 8g.
 - `README.md` and `docs/status-services.md` describe the visible behavior and
   retain the toolkit/example boundary.
 - `docs/SUMMARY.md` links this chapter.

@@ -81,9 +81,15 @@ once; wired connectivity remains capability-driven as well. The clock and
 volume grow inward from the inset left edge; network transports and battery
 grow inward from the inset right edge. Flexible space between those clusters
 keeps the output center clear. The
-Wi-Fi and cellular icons are interactive and remain visible when their runtime
-capability exists. Tapping one launches the optional network settings on the
-matching page.
+Wi-Fi and cellular icons are interactive. Cellular remains capability-driven;
+Wi-Fi appears only while its radio is enabled. Tapping a visible icon launches
+the optional network settings on the matching page.
+
+All five status glyphs—battery, volume, Wi-Fi, wired, and cellular—come from
+`patin-icons`; the bar owns only their placement and palette. The volume glyph
+has explicit off, low, medium, and high states. Zero volume and a muted sink
+draw a small neutral cross beside the speaker instead of looking like an empty
+low-volume meter. When the Wi-Fi radio is off, its bar icon and slot disappear.
 
 ### Install and run network settings
 
@@ -108,11 +114,12 @@ use Wayland text-input-v3 to request the session OSK; physical keyboard input
 and a compositor's manual OSK gesture remain available fallbacks.
 The XDG window is created before the initial NetworkManager refresh, so cold
 Wi-Fi discovery cannot delay the window appearing; each page shows a loading
-label until that first refresh completes. The initial Wi-Fi list shows every
-saved infrastructure profile. Cached access points add signal strength and a
-Wi-Fi icon; unavailable saved networks show a cross, while the active row is
-marked connected. Network rows omit a redundant numeric percentage because the
-icon carries the signal state. Availability is refreshed every two seconds while this tab
+label until that first refresh completes. The initial Wi-Fi list shows saved
+infrastructure profiles that are currently available. Cached access points add
+signal strength and a Wi-Fi icon, while the active row is marked connected.
+Unavailable profiles remain tracked internally so they can reappear, but no
+row or cross is shown. Network rows omit a redundant numeric percentage because
+the icon carries the signal state. Availability is refreshed every two seconds while this tab
 is open. A lightweight background scan is requested every ten seconds, and
 access points not seen for thirty seconds expire to unavailable. “Scan for new
 networks” requests an immediate scan and then adds newly discovered, unsaved

@@ -50,8 +50,9 @@ an explicit loading label prevents the default snapshot from being presented
 as real state while allowing the compositor to map the window immediately.
 The initial Wi-Fi refresh reads cached availability and saved profiles without
 requesting a scan; scanning for unknown networks is a separate button action.
-Stage 8f later extended this list to keep unavailable saved profiles visible
-and refresh their cached availability every two seconds.
+Stage 8f later retained unavailable profiles internally for rediscovery and
+refreshed cached availability every two seconds. The current UI renders only
+available rows.
 The window's close control is a centered `×`, distinct from the left-aligned
 setting rows.
 

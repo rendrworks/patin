@@ -4,9 +4,9 @@
 
 The demo bar originally owned its Wi-Fi glyph, which prevented network
 settings from presenting the same signal language without copying code. The
-settings list also dropped saved networks whenever they were absent from
+settings model also dropped saved networks whenever they were absent from
 NetworkManager's current access-point cache. A saved profile and a currently
-visible radio network are different facts and should remain visible as such.
+visible radio network are different facts and should remain tracked as such.
 
 ## Crate and data boundaries
 
@@ -19,8 +19,8 @@ the crate does not construct a bar or settings composition.
 `patin-service-network::WifiNetwork` now carries two independent flags:
 `known` means NetworkManager has a saved infrastructure profile, while
 `available` means the SSID occurs in its cached access-point list. The provider
-merges those sources, keeps saved-but-unavailable rows, identifies the active
-network, and excludes Wi-Fi profiles whose mode is `ap`. An explicit scan adds
+merges those sources, keeps saved-but-unavailable state internally, identifies
+the active network, and excludes Wi-Fi profiles whose mode is `ap`. An explicit scan adds
 visible unknown networks; normal refreshes reuse the current known set.
 NetworkManager can retain stale access-point objects, so availability also
 requires a D-Bus `LastSeen` timestamp no older than thirty seconds. The active
@@ -28,11 +28,12 @@ connection always remains available.
 
 ## Composition behavior
 
-The demo bar consumes the shared icon for its connected signal and unavailable
-state. Network settings uses the same four states beside each row: cached
-strength selects poor, medium, or good, while an unavailable saved network gets
-a cross. The icon carries signal strength without a redundant numeric
-percentage; text marks only the active row as connected.
+The demo bar consumes the shared icon for its connected signal. Its Wi-Fi slot
+disappears entirely when the radio is off. Network settings uses poor, medium,
+or good states beside currently available rows; saved but unavailable entries
+remain in the refresh model without rendering a row or cross. The icon carries
+signal strength without a redundant numeric percentage; text marks only the
+active row as connected.
 
 The Wi-Fi page refreshes availability every two one-second shell update ticks
 and requests a lightweight background scan every ten ticks. This lets an
@@ -45,8 +46,7 @@ the row on the phone-sized layout.
 ## Changed files and important functions
 
 - `crates/patin-icons/src/lib.rs`: `WifiSignal::from_percentage` defines the
-  shared thresholds; `wifi_signal` draws the available arcs or unavailable
-  cross.
+  shared thresholds; `wifi_signal` draws the signal arcs.
 - `examples/demo_bar/scene.rs`: `DemoBar::commands` now consumes
   `patin-icons`; `wifi_palette` keeps the bar's colors local.
 - `crates/patin-service-network/src/lib.rs`: `merge_wifi_profiles` combines
