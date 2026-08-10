@@ -144,16 +144,7 @@ impl NetworkProvider {
                 security,
                 active: fields[0] == "*" || fields[0] == "yes",
             };
-            if let Some(existing) = networks
-                .iter_mut()
-                .find(|network| network.ssid == candidate.ssid)
-            {
-                if candidate.strength > existing.strength {
-                    *existing = candidate;
-                }
-            } else {
-                networks.push(candidate);
-            }
+            merge_wifi_network(&mut networks, candidate);
         }
         networks.sort_by_key(|network| {
             (
@@ -353,6 +344,19 @@ fn filter_known_wifi_networks(
         .into_iter()
         .filter(|network| network.active || known_ssids.contains(&network.ssid))
         .collect()
+}
+
+fn merge_wifi_network(networks: &mut Vec<WifiNetwork>, candidate: WifiNetwork) {
+    if let Some(existing) = networks
+        .iter_mut()
+        .find(|network| network.ssid == candidate.ssid)
+    {
+        if candidate.active || (!existing.active && candidate.strength > existing.strength) {
+            *existing = candidate;
+        }
+    } else {
+        networks.push(candidate);
+    }
 }
 
 fn wifi_profile_uuids(profiles: &str) -> Vec<String> {
@@ -609,8 +613,8 @@ mod tests {
 
     use super::{
         NetworkProvider, NetworkSnapshot, Provider, WifiNetwork, WifiSecurity,
-        filter_known_wifi_networks, split_escaped, validate_hotspot, wifi_profile_uuid,
-        wifi_profile_uuids,
+        filter_known_wifi_networks, merge_wifi_network, split_escaped, validate_hotspot,
+        wifi_profile_uuid, wifi_profile_uuids,
     };
 
     #[test]
@@ -691,6 +695,29 @@ mod tests {
             .collect::<Vec<_>>(),
             ["Connected", "Home"]
         );
+    }
+
+    #[test]
+    fn connected_access_point_wins_over_stronger_duplicate_ssid() {
+        let mut networks = vec![WifiNetwork {
+            ssid: "DELTA".into(),
+            strength: 90,
+            security: WifiSecurity::Personal,
+            active: false,
+        }];
+        merge_wifi_network(
+            &mut networks,
+            WifiNetwork {
+                ssid: "DELTA".into(),
+                strength: 69,
+                security: WifiSecurity::Personal,
+                active: true,
+            },
+        );
+
+        assert_eq!(networks.len(), 1);
+        assert!(networks[0].active);
+        assert_eq!(networks[0].strength, 69);
     }
 
     #[test]

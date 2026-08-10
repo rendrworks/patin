@@ -123,8 +123,20 @@ impl NetworkSettings {
         let mut y = 70.0;
         match self.page {
             Page::Wifi => {
+                let row_width = width - 32.0;
+                let disconnect_width = 112.0;
+                let connected = self.snapshot.wifi.is_some();
                 self.button(
-                    Rect::new(left + 16.0, y, width - 32.0, ROW),
+                    Rect::new(
+                        left + 16.0,
+                        y,
+                        if connected {
+                            row_width - disconnect_width - 6.0
+                        } else {
+                            row_width
+                        },
+                        ROW,
+                    ),
                     if self.initial_refresh_pending {
                         "Wi-Fi: loading…"
                     } else if self.snapshot.wifi_enabled {
@@ -134,6 +146,18 @@ impl NetworkSettings {
                     },
                     Action::ToggleWifi,
                 );
+                if connected {
+                    self.button(
+                        Rect::new(
+                            left + 16.0 + row_width - disconnect_width,
+                            y,
+                            disconnect_width,
+                            ROW,
+                        ),
+                        "Disconnect",
+                        Action::Disconnect,
+                    );
+                }
                 y += ROW + 6.0;
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
@@ -145,14 +169,6 @@ impl NetworkSettings {
                     Action::ScanWifi,
                 );
                 y += ROW + 6.0;
-                if self.snapshot.wifi.is_some() {
-                    self.button(
-                        Rect::new(left + 16.0, y, width - 32.0, ROW),
-                        "Disconnect current Wi-Fi",
-                        Action::Disconnect,
-                    );
-                    y += ROW + 6.0;
-                }
                 let row_capacity =
                     ((self.size.height - y + 6.0).max(0.0) / (ROW + 6.0)).floor() as usize;
                 let max_rows = row_capacity.min(if self.editing.is_some() { 2 } else { 5 });
@@ -643,6 +659,31 @@ mod tests {
         assert!(ui.buttons.iter().all(|button| {
             button.bounds.origin.y + button.bounds.size.height <= ui.size.height
         }));
+    }
+
+    #[test]
+    fn disconnect_sits_right_of_wifi_toggle_when_connected() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        ui.initial_refresh_pending = false;
+        ui.snapshot.wifi = Some(69);
+        ui.resize(Size {
+            width: 320.0,
+            height: 480.0,
+        });
+
+        let wifi = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::ToggleWifi))
+            .unwrap();
+        let disconnect = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::Disconnect))
+            .unwrap();
+        assert_eq!(wifi.bounds.origin.y, disconnect.bounds.origin.y);
+        assert!(disconnect.bounds.origin.x > wifi.bounds.origin.x);
+        assert_eq!(disconnect.label, "Disconnect");
     }
 
     #[test]

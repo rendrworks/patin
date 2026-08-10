@@ -52,6 +52,11 @@ state before the synchronous operation starts, and successful results replace
 the filtered list with every discovered network. Thus a radio scan occurs only
 after user intent and never forms part of perceived launch time.
 
+When connected, Disconnect shares the Wi-Fi radio row on its right. Duplicate
+access points with the same SSID are collapsed without losing active state: an
+active BSSID always wins over a stronger inactive BSSID, so the connected label
+does not depend on scan ordering or signal strength.
+
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
 hotspots, and a PolicyKit agent are later work.
 
