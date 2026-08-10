@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-cargo build --release --locked --example demo_bar -p patin-network-settings
+cargo build --release --locked --example demo_bar -p patin
+cargo build --release --locked -p patin-network-settings
 
 user_bin_dir="${HOME}/.local/bin"
 install -d "${user_bin_dir}"
@@ -10,7 +11,4 @@ install -m 0755 target/release/patin-network-settings "${user_bin_dir}/patin-net
 
 printf 'Installed demo bar as %s\n' "${user_bin_dir}/patin"
 printf 'Installed network settings as %s\n' "${user_bin_dir}/patin-network-settings"
-if ! grep -qs '^EnableNetworkConfiguration=true$' /etc/iwd/main.conf; then
-    printf '%s\n' 'Merge data/iwd/main.conf.example into /etc/iwd/main.conf, then restart iwd.'
-fi
 printf 'Run it with: patin\n'

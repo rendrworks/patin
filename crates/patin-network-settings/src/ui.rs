@@ -5,7 +5,8 @@ use patin::{
     ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign},
 };
 use patin_service_network::{
-    HotspotConfig, NetworkProvider, NetworkSnapshot, WifiNetwork, WifiSecurity,
+    HotspotBand, HotspotConfig, HotspotSecurity, NetworkProvider, NetworkSnapshot, WifiNetwork,
+    WifiSecurity,
 };
 use zeroize::Zeroizing;
 
@@ -29,6 +30,8 @@ enum Action {
     Forget(usize),
     EditHotspotSsid,
     EditHotspotPassword,
+    ToggleHotspotSecurity,
+    ToggleHotspotBand,
     SaveHotspot,
     ToggleHotspot,
 }
@@ -163,6 +166,25 @@ impl NetworkSettings {
                 y += ROW + 6.0;
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
+                    match self.hotspot.security {
+                        HotspotSecurity::Open => "Security: open",
+                        HotspotSecurity::WpaPersonal => "Security: WPA2/WPA3 personal",
+                    },
+                    Action::ToggleHotspotSecurity,
+                );
+                y += ROW + 6.0;
+                self.button(
+                    Rect::new(left + 16.0, y, width - 32.0, ROW),
+                    match self.hotspot.band {
+                        HotspotBand::Automatic => "Band: automatic",
+                        HotspotBand::Ghz2_4 => "Band: 2.4 GHz",
+                        HotspotBand::Ghz5 => "Band: 5 GHz",
+                    },
+                    Action::ToggleHotspotBand,
+                );
+                y += ROW + 6.0;
+                self.button(
+                    Rect::new(left + 16.0, y, width - 32.0, ROW),
                     &format!("SSID: {}", self.hotspot.ssid),
                     Action::EditHotspotSsid,
                 );
@@ -186,9 +208,9 @@ impl NetworkSettings {
             Page::Cellular => self.button(
                 Rect::new(left + 16.0, y, width - 32.0, ROW),
                 if self.snapshot.cellular_enabled {
-                    "Cellular modem: on"
+                    "Mobile data: on"
                 } else {
-                    "Cellular modem: off"
+                    "Mobile data: off"
                 },
                 Action::ToggleCellular,
             ),
@@ -310,6 +332,21 @@ impl NetworkSettings {
             Action::EditHotspotPassword => {
                 self.hotspot_password.clear();
                 self.editing = Some(Editing::HotspotPassword);
+                self.redraw();
+            }
+            Action::ToggleHotspotSecurity => {
+                self.hotspot.security = match self.hotspot.security {
+                    HotspotSecurity::Open => HotspotSecurity::WpaPersonal,
+                    HotspotSecurity::WpaPersonal => HotspotSecurity::Open,
+                };
+                self.redraw();
+            }
+            Action::ToggleHotspotBand => {
+                self.hotspot.band = match self.hotspot.band {
+                    HotspotBand::Automatic => HotspotBand::Ghz2_4,
+                    HotspotBand::Ghz2_4 => HotspotBand::Ghz5,
+                    HotspotBand::Ghz5 => HotspotBand::Automatic,
+                };
                 self.redraw();
             }
             Action::SaveHotspot => {
