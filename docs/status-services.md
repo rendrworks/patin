@@ -66,6 +66,11 @@ without treating VPN or loopback connections as physical transports.
 The demo draws a wifi fan, a linked-node icon for wired, and cellular strength
 bars. Only active/registered transport icons receive slots.
 
+The current snapshot also reports hardware availability, radio enablement, and
+the Patin hotspot state. This keeps disconnected radios visible without naming
+an interface or phone model. Explicit control methods back the independent
+network-settings composition; NetworkManager still owns profiles and sharing.
+
 ## Polling
 
 The demo's `Shell::update` polls its three providers once per platform

@@ -11,7 +11,7 @@ use smithay_client_toolkit::{
         client::{
             Connection, Dispatch, QueueHandle,
             globals::registry_queue_init,
-            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
+            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
         },
         protocols::wp::{
             fractional_scale::v1::client::{
@@ -28,6 +28,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         Capability, SeatHandler, SeatState,
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
         touch::TouchHandler,
     },
@@ -81,11 +82,22 @@ pub struct LayerConfig {
     pub keyboard: KeyboardPolicy,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KeyInput {
+    Text(String),
+    Backspace,
+    Enter,
+    Escape,
+}
+
 pub trait Shell {
     fn resize(&mut self, size: Size);
     fn update(&mut self) -> bool;
     fn activate_at(&mut self, position: (f64, f64)) -> bool;
     fn scroll_by(&mut self, _delta_y: f64) -> bool {
+        false
+    }
+    fn key_input(&mut self, _input: KeyInput) -> bool {
         false
     }
     fn close_requested(&self) -> bool {
@@ -178,6 +190,7 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
         shell: Box::new(shell),
         pointers: Vec::new(),
         touches: Vec::new(),
+        keyboards: Vec::new(),
         active_touches: Vec::new(),
         trace: std::env::var_os("PATIN_TRACE").is_some(),
         exit: false,
@@ -229,6 +242,7 @@ struct Patin {
     shell: Box<dyn Shell>,
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
+    keyboards: Vec<(wl_seat::WlSeat, wl_keyboard::WlKeyboard)>,
     active_touches: Vec<ActiveTouch>,
     trace: bool,
     exit: bool,
@@ -529,6 +543,12 @@ impl SeatHandler for Patin {
                     Err(error) => eprintln!("patin: could not create touch input: {error}"),
                 }
             }
+            Capability::Keyboard if !self.keyboards.iter().any(|(known, _)| known == &seat) => {
+                match self.seat_state.get_keyboard(queue_handle, &seat, None) {
+                    Ok(keyboard) => self.keyboards.push((seat, keyboard)),
+                    Err(error) => eprintln!("patin: could not create keyboard: {error}"),
+                }
+            }
             _ => {}
         }
     }
@@ -565,6 +585,16 @@ impl SeatHandler for Patin {
                     }
                 });
             }
+            Capability::Keyboard => {
+                self.keyboards.retain(|(known, keyboard)| {
+                    if known == &seat {
+                        keyboard.release();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -576,7 +606,95 @@ impl SeatHandler for Patin {
         seat: wl_seat::WlSeat,
     ) {
         self.remove_capability(connection, queue_handle, seat.clone(), Capability::Pointer);
-        self.remove_capability(connection, queue_handle, seat, Capability::Touch);
+        self.remove_capability(connection, queue_handle, seat.clone(), Capability::Touch);
+        self.remove_capability(connection, queue_handle, seat, Capability::Keyboard);
+    }
+}
+
+impl KeyboardHandler for Patin {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
+    }
+
+    fn leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+    }
+
+    fn press_key(
+        &mut self,
+        _: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        let input = if event.keysym == Keysym::BackSpace {
+            Some(KeyInput::Backspace)
+        } else if event.keysym == Keysym::Return || event.keysym == Keysym::KP_Enter {
+            Some(KeyInput::Enter)
+        } else if event.keysym == Keysym::Escape {
+            Some(KeyInput::Escape)
+        } else {
+            event
+                .utf8
+                .filter(|value| !value.chars().all(char::is_control))
+                .map(KeyInput::Text)
+        };
+        if let Some(input) = input
+            && self.shell.key_input(input)
+        {
+            self.request_redraw(queue_handle);
+        }
+        if self.shell.close_requested() {
+            self.exit = true;
+        }
+    }
+
+    fn repeat_key(
+        &mut self,
+        connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        keyboard: &wl_keyboard::WlKeyboard,
+        serial: u32,
+        event: KeyEvent,
+    ) {
+        self.press_key(connection, queue_handle, keyboard, serial, event);
+    }
+
+    fn release_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: KeyEvent,
+    ) {
+    }
+
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: Modifiers,
+        _: RawModifiers,
+        _: u32,
+    ) {
     }
 }
 

@@ -983,6 +983,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "patin-network-settings"
+version = "0.1.0"
+dependencies = [
+ "patin",
+ "patin-service-network",
+ "zeroize",
+]
+
+[[package]]
 name = "patin-service-brightness"
 version = "0.1.0"
 dependencies = [

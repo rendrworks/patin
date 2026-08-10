@@ -152,8 +152,9 @@ damaged rectangles when state changes.
 Resize and scale changes damage the full bar; clock and status-fixture
 changes damage only their component bounds. The Wayland boundary converts
 those rectangles to outward-rounded physical buffer coordinates. The bar has
-no interactive element right now — `Shell::activate_at` is a no-op — so
-pointer and touch presses reach it without visibly changing anything.
+capability-backed Wi-Fi and cellular hit targets. They launch the independent
+network-settings process on the corresponding page, including while a radio is
+disabled or disconnected.
 
 Battery, volume, brightness, and network themselves are toolkit-level
 provider crates (see "Service adapters" below), not example implementation
@@ -183,6 +184,10 @@ owns the domain outright:
   registered modem signal from ModemManager, allowing wifi and cellular fields
   to be populated simultaneously. Missing transports remain `None`/`false`
   inside a real snapshot; an unavailable system bus returns `None`.
+  It also exposes explicit essential controls. NetworkManager's `nmcli`
+  frontend performs profile-heavy mutations so persistent settings and secrets
+  remain owned by NetworkManager.
+
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in
   [Status Providers](status-services.md)), so they shell out to
@@ -191,6 +196,13 @@ owns the domain outright:
 All four degrade their `Provider::poll` result when their underlying
 service or file isn't reachable, the same failure behavior the demo's
 status fixtures already had before they moved into these crates.
+
+## Reusable keyboard input
+
+Layer-shell consumers receive toolkit-owned `KeyInput` values from keyboards
+discovered per Wayland seat. `patin::keyboard` supplies adaptive touch-key
+layout, drawing, state, and hit-testing shared by the lock and network
+settings. Password zeroization and PAM remain lock-specific.
 
 All four adapters are intentionally poll-based, reusing the same
 `Shell::update` tick the demo already had. A push-only service such as

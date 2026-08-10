@@ -6,6 +6,9 @@ use patin::{
 use patin_service_network::NetworkSnapshot;
 use patin_service_upower::BatterySnapshot;
 use patin_service_volume::VolumeSnapshot;
+use std::process::Child;
+#[cfg(not(test))]
+use std::process::Command;
 
 use super::services::SystemStatus;
 
@@ -47,6 +50,9 @@ pub struct DemoBar {
     clock: String,
     damage: Vec<Rect>,
     status: SystemStatus,
+    settings_child: Option<Child>,
+    #[cfg(test)]
+    last_launched_page: Option<&'static str>,
 }
 
 impl DemoBar {
@@ -72,6 +78,9 @@ impl DemoBar {
             clock: current_clock(),
             damage: Vec::new(),
             status,
+            settings_child: None,
+            #[cfg(test)]
+            last_launched_page: None,
         };
         bar.layout();
         bar
@@ -84,13 +93,13 @@ impl DemoBar {
             lengths.push(Length::Fixed(40.0));
         }
         lengths.push(Length::Fill(1.0));
-        if network.wifi.is_some() {
+        if network.wifi_available || network.wifi.is_some() {
             lengths.push(Length::Fixed(40.0));
         }
         if network.wired {
             lengths.push(Length::Fixed(40.0));
         }
-        if network.cellular.is_some() {
+        if network.cellular_available || network.cellular.is_some() {
             lengths.push(Length::Fixed(40.0));
         }
         if self.battery.is_some() {
@@ -115,7 +124,7 @@ impl DemoBar {
             bounds
         });
         index += 1;
-        self.wifi_bounds = network.wifi.map(|_| {
+        self.wifi_bounds = (network.wifi_available || network.wifi.is_some()).then(|| {
             let bounds = children[index];
             index += 1;
             bounds
@@ -125,12 +134,35 @@ impl DemoBar {
             index += 1;
             bounds
         });
-        self.cellular_bounds = network.cellular.map(|_| {
-            let bounds = children[index];
-            index += 1;
-            bounds
-        });
+        self.cellular_bounds =
+            (network.cellular_available || network.cellular.is_some()).then(|| {
+                let bounds = children[index];
+                index += 1;
+                bounds
+            });
         self.battery_bounds = self.battery.as_ref().map(|_| children[children.len() - 1]);
+    }
+
+    fn launch_settings(&mut self, page: &'static str) {
+        if let Some(child) = &mut self.settings_child {
+            if child.try_wait().ok().flatten().is_none() {
+                return;
+            }
+            self.settings_child = None;
+        }
+        #[cfg(test)]
+        {
+            self.last_launched_page = Some(page);
+        }
+        #[cfg(not(test))]
+        {
+            let program = std::env::var_os("PATIN_NETWORK_SETTINGS_PROGRAM")
+                .unwrap_or_else(|| "patin-network-settings".into());
+            match Command::new(program).arg(format!("--page={page}")).spawn() {
+                Ok(child) => self.settings_child = Some(child),
+                Err(error) => eprintln!("demo_bar: could not launch network settings: {error}"),
+            }
+        }
     }
 
     fn set_status(
@@ -176,9 +208,9 @@ impl DemoBar {
 fn network_membership(network: Option<NetworkSnapshot>) -> (bool, bool, bool) {
     let network = network.unwrap_or_default();
     (
-        network.wifi.is_some(),
+        network.wifi_available || network.wifi.is_some(),
         network.wired,
-        network.cellular.is_some(),
+        network.cellular_available || network.cellular.is_some(),
     )
 }
 
@@ -200,10 +232,26 @@ impl Shell for DemoBar {
             changed = true;
         }
         let snapshot = self.status.poll();
+        if let Some(child) = &mut self.settings_child
+            && child.try_wait().ok().flatten().is_some()
+        {
+            self.settings_child = None;
+        }
         self.set_status(snapshot.battery, snapshot.volume, snapshot.network) || changed
     }
 
-    fn activate_at(&mut self, _position: (f64, f64)) -> bool {
+    fn activate_at(&mut self, position: (f64, f64)) -> bool {
+        if self
+            .wifi_bounds
+            .is_some_and(|bounds| bounds.contains(position))
+        {
+            self.launch_settings("wifi");
+        } else if self
+            .cellular_bounds
+            .is_some_and(|bounds| bounds.contains(position))
+        {
+            self.launch_settings("cellular");
+        }
         false
     }
 
@@ -228,7 +276,7 @@ impl Shell for DemoBar {
         }
         if let (Some(bounds), Some(percentage)) = (
             self.wifi_bounds,
-            self.network.and_then(|network| network.wifi),
+            self.network.map(|network| network.wifi.unwrap_or(0)),
         ) {
             commands.extend(wifi_icon(bounds, percentage, self.style));
         }
@@ -239,7 +287,7 @@ impl Shell for DemoBar {
         }
         if let (Some(bounds), Some(percentage)) = (
             self.cellular_bounds,
-            self.network.and_then(|network| network.cellular),
+            self.network.map(|network| network.cellular.unwrap_or(0)),
         ) {
             commands.extend(cellular_icon(bounds, percentage, self.style));
         }
@@ -514,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn activate_at_has_no_effect_without_interactive_elements() {
+    fn tapping_outside_network_icons_has_no_effect() {
         let mut bar = DemoBar::new();
         bar.resize(Size {
             width: 500.0,
@@ -523,6 +571,30 @@ mod tests {
         bar.take_damage();
         assert!(!bar.activate_at((20.0, 16.0)));
         assert!(bar.take_damage().is_empty());
+    }
+
+    #[test]
+    fn network_icons_launch_the_matching_page() {
+        let mut bar = DemoBar::new();
+        bar.set_status(
+            None,
+            None,
+            Some(NetworkSnapshot {
+                wifi_available: true,
+                cellular_available: true,
+                ..Default::default()
+            }),
+        );
+        bar.resize(Size {
+            width: 500.0,
+            height: 32.0,
+        });
+        let wifi = bar.wifi_bounds.unwrap();
+        bar.activate_at((f64::from(wifi.origin.x + 2.0), 16.0));
+        assert_eq!(bar.last_launched_page, Some("wifi"));
+        let cellular = bar.cellular_bounds.unwrap();
+        bar.activate_at((f64::from(cellular.origin.x + 2.0), 16.0));
+        assert_eq!(bar.last_launched_page, Some("cellular"));
     }
 
     #[test]
@@ -541,6 +613,7 @@ mod tests {
                 wifi: Some(75),
                 cellular: Some(55),
                 wired: false,
+                ..Default::default()
             }),
         );
         bar.resize(Size {

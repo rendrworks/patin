@@ -41,6 +41,7 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
 - `patin-service-network` — connectivity state over D-Bus/NetworkManager.
+- `patin-network-settings` — independently launched Wi-Fi, mobile-data, and hotspot controls.
 - `patin-launcher` — an independently launched, touch-friendly application list.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
@@ -78,8 +79,23 @@ once; wired connectivity remains capability-driven as well. The clock and
 volume grow inward from the inset left edge; network transports and battery
 grow inward from the inset right edge. Flexible space between those clusters
 keeps the output center clear. The
-bar has no interactive element of its own right now — pointer and touch input
-still reach `Shell::activate_at`, they just have nothing to act on.
+Wi-Fi and cellular icons are interactive and remain visible when their runtime
+capability exists. Tapping one launches the optional network settings on the
+matching page.
+
+### Install and run network settings
+
+NetworkManager remains the system daemon; Patin is its frontend. The separate
+composition scans and joins Wi-Fi, toggles mobile data, and manages one
+persistent hotspot profile with editable SSID, password, security, and band:
+
+```sh
+./scripts/install-network-settings-user.sh
+patin-network-settings --page=wifi
+```
+
+Profile operations use NetworkManager's `nmcli` client. PolicyKit remains
+session policy; Patin displays authorization failures but is not an auth agent.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.
@@ -207,8 +223,9 @@ FP5:
 patin
 ```
 
-This explicitly installs the `demo_bar` example as `~/.local/bin/patin`. It
-does not add a default binary to the toolkit crate. The FP5 login profile
+This installs the `demo_bar` example as `~/.local/bin/patin` and its separately
+launched `patin-network-settings` companion. It does not add a default toolkit
+binary. The FP5 login profile
 already includes `~/.local/bin` in `PATH`; open a new terminal after the first
 installation if the current shell has not loaded that profile.
 
