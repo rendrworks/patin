@@ -197,12 +197,18 @@ All four degrade their `Provider::poll` result when their underlying
 service or file isn't reachable, the same failure behavior the demo's
 status fixtures already had before they moved into these crates.
 
-## Reusable keyboard input
+## Text input and lock input
 
-Layer-shell consumers receive toolkit-owned `KeyInput` values from keyboards
-discovered per Wayland seat. `patin::keyboard` supplies adaptive touch-key
-layout, drawing, state, and hit-testing shared by the lock and network
-settings. Password zeroization and PAM remain lock-specific.
+Consumers receive toolkit-owned `KeyInput` values from physical or virtual
+keyboards discovered per Wayland seat. A normal text field exposes only a
+`TextInputPurpose`; the platform announces that intent with optional
+text-input-v3 and the compositor chooses the session OSK. Network settings is
+an XDG toplevel, while bars and transient shell compositions continue to use
+layer-shell.
+
+The lock is intentionally different. Its touch keyboard, password buffer, and
+PAM flow are private to `patin-lock`, so authentication never depends on a
+session OSK or a focused normal application.
 
 All four adapters are intentionally poll-based, reusing the same
 `Shell::update` tick the demo already had. A push-only service such as
@@ -213,8 +219,9 @@ scoped to whichever future stage first needs it.
 ## Deliberate boundaries
 
 Rendering is kept behind a small interface so a GPU backend can be added if
-measurements justify it. Patin exposes only shell-focused primitives and does
-not build abstractions for hypothetical application GUI use.
+measurements justify it. Patin supports the two demonstrated Wayland roles—
+layer-shell compositions and small XDG toplevels—without becoming a general
+application GUI framework.
 
 Core behavior must not branch on hardware models, connector names, fixed
 resolutions, compositor brands, or assumed scales. Outputs, transforms, input

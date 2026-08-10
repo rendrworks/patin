@@ -1,8 +1,9 @@
 use chrono::{Local, Timelike};
-use patin::keyboard::TouchKeyboard;
-pub use patin::keyboard::{Key, KeyboardMode};
 use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::keyboard::TouchKeyboard;
+pub use crate::keyboard::{Key, KeyboardMode};
 
 const MAX_PASSWORD_BYTES: usize = 256;
 

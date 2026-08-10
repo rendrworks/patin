@@ -27,3 +27,4 @@
 - [Stage 8b — Session Action Menu](stages/stage-8b-session-menu.md)
 - [Stage 8c — Reproducible Linux CI](stages/stage-8c-linux-ci.md)
 - [Stage 8d — Network Settings and Hotspot](stages/stage-8d-network-settings.md)
+- [Stage 8e — Managed Settings and System OSK](stages/stage-8e-managed-settings-osk.md)

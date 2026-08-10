@@ -4,7 +4,6 @@
 //! Consumers provide a [`platform::Shell`] implementation and choose their own
 //! UI composition. See `examples/demo_bar.rs` for a demonstrator.
 
-pub mod keyboard;
 pub mod platform;
 pub mod render;
 pub mod service;

@@ -1,4 +1,5 @@
 mod auth;
+mod keyboard;
 mod ui;
 
 use auth::{AuthResult, authenticate, effective_username};

@@ -18,6 +18,10 @@ use smithay_client_toolkit::{
                 wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
                 wp_fractional_scale_v1::{self, WpFractionalScaleV1},
             },
+            text_input::zv3::client::{
+                zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+                zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
+            },
             viewporter::client::{
                 wp_viewport::{self, WpViewport},
                 wp_viewporter::WpViewporter,
@@ -37,6 +41,10 @@ use smithay_client_toolkit::{
         wlr_layer::{
             Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
             LayerSurfaceConfigure,
+        },
+        xdg::{
+            XdgShell,
+            window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
         },
     },
     shm::{Shm, ShmHandler, slot::SlotPool},
@@ -82,6 +90,19 @@ pub struct LayerConfig {
     pub keyboard: KeyboardPolicy,
 }
 
+pub struct WindowConfig {
+    pub app_id: String,
+    pub title: String,
+    pub initial_size: (u32, u32),
+    pub min_size: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextInputPurpose {
+    Normal,
+    Password,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KeyInput {
     Text(String),
@@ -100,6 +121,9 @@ pub trait Shell {
     fn key_input(&mut self, _input: KeyInput) -> bool {
         false
     }
+    fn text_input(&self) -> Option<TextInputPurpose> {
+        None
+    }
     fn close_requested(&self) -> bool {
         false
     }
@@ -109,6 +133,48 @@ pub trait Shell {
 }
 
 pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<dyn Error>> {
+    run_surface(SurfaceConfig::Layer(config), shell)
+}
+
+pub fn run_window(config: WindowConfig, shell: impl Shell + 'static) -> Result<(), Box<dyn Error>> {
+    run_surface(SurfaceConfig::Window(config), shell)
+}
+
+enum SurfaceConfig {
+    Layer(LayerConfig),
+    Window(WindowConfig),
+}
+
+enum SurfaceRole {
+    Layer(LayerSurface),
+    Window(Window),
+}
+
+impl SurfaceRole {
+    fn wl_surface(&self) -> &wl_surface::WlSurface {
+        match self {
+            Self::Layer(layer) => layer.wl_surface(),
+            Self::Window(window) => window.wl_surface(),
+        }
+    }
+
+    fn commit(&self) {
+        match self {
+            Self::Layer(layer) => layer.commit(),
+            Self::Window(window) => window.commit(),
+        }
+    }
+}
+
+struct TextInputHandle {
+    seat: wl_seat::WlSeat,
+    proxy: ZwpTextInputV3,
+    entered: bool,
+    applied: Option<TextInputPurpose>,
+    pending_commit: Option<String>,
+}
+
+fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(), Box<dyn Error>> {
     let connection = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init(&connection)?;
     let queue_handle = event_queue.handle();
@@ -118,8 +184,6 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
 
     let compositor = CompositorState::bind(&globals, &queue_handle)
         .map_err(|error| format!("compositor does not provide wl_compositor: {error}"))?;
-    let layer_shell = LayerShell::bind(&globals, &queue_handle)
-        .map_err(|error| format!("compositor does not support layer-shell: {error}"))?;
     let shm = Shm::bind(&globals, &queue_handle)
         .map_err(|error| format!("compositor does not provide wl_shm: {error}"))?;
 
@@ -139,35 +203,53 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
             .map(|manager| manager.get_fractional_scale(&surface, &queue_handle, ()))
     });
 
-    let layer = layer_shell.create_layer_surface(
-        &queue_handle,
-        surface,
-        match config.layer {
-            LayerLevel::Background => Layer::Background,
-            LayerLevel::Bottom => Layer::Bottom,
-            LayerLevel::Top => Layer::Top,
-            LayerLevel::Overlay => Layer::Overlay,
-        },
-        Some(config.namespace),
-        None,
-    );
-    let mut anchor = Anchor::empty();
-    anchor.set(Anchor::TOP, config.anchors.top);
-    anchor.set(Anchor::BOTTOM, config.anchors.bottom);
-    anchor.set(Anchor::LEFT, config.anchors.left);
-    anchor.set(Anchor::RIGHT, config.anchors.right);
-    layer.set_anchor(anchor);
-    layer.set_size(config.size.0, config.size.1);
-    layer.set_exclusive_zone(config.exclusive_zone);
-    layer.set_keyboard_interactivity(match config.keyboard {
-        KeyboardPolicy::None => KeyboardInteractivity::None,
-        KeyboardPolicy::Exclusive => KeyboardInteractivity::Exclusive,
-        KeyboardPolicy::OnDemand => KeyboardInteractivity::OnDemand,
-    });
-    layer.commit();
+    let (role, requested_size) = match config {
+        SurfaceConfig::Layer(config) => {
+            let layer_shell = LayerShell::bind(&globals, &queue_handle)
+                .map_err(|error| format!("compositor does not support layer-shell: {error}"))?;
+            let layer = layer_shell.create_layer_surface(
+                &queue_handle,
+                surface,
+                match config.layer {
+                    LayerLevel::Background => Layer::Background,
+                    LayerLevel::Bottom => Layer::Bottom,
+                    LayerLevel::Top => Layer::Top,
+                    LayerLevel::Overlay => Layer::Overlay,
+                },
+                Some(config.namespace),
+                None,
+            );
+            let mut anchor = Anchor::empty();
+            anchor.set(Anchor::TOP, config.anchors.top);
+            anchor.set(Anchor::BOTTOM, config.anchors.bottom);
+            anchor.set(Anchor::LEFT, config.anchors.left);
+            anchor.set(Anchor::RIGHT, config.anchors.right);
+            layer.set_anchor(anchor);
+            layer.set_size(config.size.0, config.size.1);
+            layer.set_exclusive_zone(config.exclusive_zone);
+            layer.set_keyboard_interactivity(match config.keyboard {
+                KeyboardPolicy::None => KeyboardInteractivity::None,
+                KeyboardPolicy::Exclusive => KeyboardInteractivity::Exclusive,
+                KeyboardPolicy::OnDemand => KeyboardInteractivity::OnDemand,
+            });
+            layer.commit();
+            (SurfaceRole::Layer(layer), config.size)
+        }
+        SurfaceConfig::Window(config) => {
+            let xdg_shell = XdgShell::bind(&globals, &queue_handle)
+                .map_err(|error| format!("compositor does not support xdg-shell: {error}"))?;
+            let window =
+                xdg_shell.create_window(surface, WindowDecorations::RequestServer, &queue_handle);
+            window.set_app_id(config.app_id);
+            window.set_title(config.title);
+            window.set_min_size(config.min_size);
+            window.commit();
+            (SurfaceRole::Window(window), config.initial_size)
+        }
+    };
 
     let initial_pool_size =
-        config.size.0.max(1) as usize * config.size.1.max(1) as usize * BYTES_PER_PIXEL;
+        requested_size.0.max(1) as usize * requested_size.1.max(1) as usize * BYTES_PER_PIXEL;
     let pool = SlotPool::new(initial_pool_size, &shm)?;
     let mut patin = Patin {
         registry_state: RegistryState::new(&globals),
@@ -175,13 +257,13 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
         output_state: OutputState::new(&globals, &queue_handle),
         shm,
         pool,
-        layer,
+        role,
         _viewporter: viewporter,
         viewport,
         _fractional_scale_manager: fractional_scale_manager,
         _fractional_scale: fractional_scale,
         renderer: CpuRenderer::new(),
-        requested_size: config.size,
+        requested_size,
         logical_size: None,
         scale: Scale::ONE,
         has_fractional_preference: false,
@@ -191,6 +273,10 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
         pointers: Vec::new(),
         touches: Vec::new(),
         keyboards: Vec::new(),
+        text_input_manager: globals
+            .bind::<ZwpTextInputManagerV3, _, _>(&queue_handle, 1..=1, ())
+            .ok(),
+        text_inputs: Vec::new(),
         active_touches: Vec::new(),
         trace: std::env::var_os("PATIN_TRACE").is_some(),
         exit: false,
@@ -202,6 +288,7 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
             if patin.shell.update() {
                 patin.redraw_requested = true;
             }
+            patin.sync_text_input();
             if patin.shell.close_requested() {
                 patin.exit = true;
             }
@@ -218,6 +305,8 @@ pub fn run(config: LayerConfig, shell: impl Shell + 'static) -> Result<(), Box<d
         }
     }
 
+    patin.disable_text_input();
+
     Ok(())
 }
 
@@ -227,7 +316,7 @@ struct Patin {
     output_state: OutputState,
     shm: Shm,
     pool: SlotPool,
-    layer: LayerSurface,
+    role: SurfaceRole,
     _viewporter: Option<SimpleGlobal<WpViewporter, 1>>,
     viewport: Option<WpViewport>,
     _fractional_scale_manager: Option<SimpleGlobal<WpFractionalScaleManagerV1, 1>>,
@@ -243,6 +332,8 @@ struct Patin {
     pointers: Vec<(wl_seat::WlSeat, wl_pointer::WlPointer)>,
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     keyboards: Vec<(wl_seat::WlSeat, wl_keyboard::WlKeyboard)>,
+    text_input_manager: Option<ZwpTextInputManagerV3>,
+    text_inputs: Vec<TextInputHandle>,
     active_touches: Vec<ActiveTouch>,
     trace: bool,
     exit: bool,
@@ -257,6 +348,41 @@ struct ActiveTouch {
 }
 
 impl Patin {
+    fn sync_text_input(&mut self) {
+        let desired = self.shell.text_input();
+        for handle in &mut self.text_inputs {
+            let desired = handle.entered.then_some(desired).flatten();
+            if handle.applied == desired {
+                continue;
+            }
+            if handle.applied.is_some() {
+                handle.proxy.disable();
+                handle.proxy.commit();
+            }
+            if let Some(purpose) = desired {
+                let (hint, protocol_purpose) = match purpose {
+                    TextInputPurpose::Normal => (ContentHint::None, ContentPurpose::Normal),
+                    TextInputPurpose::Password => {
+                        (ContentHint::SensitiveData, ContentPurpose::Password)
+                    }
+                };
+                handle.proxy.enable();
+                handle.proxy.set_content_type(hint, protocol_purpose);
+                handle.proxy.commit();
+            }
+            handle.applied = desired;
+        }
+    }
+
+    fn disable_text_input(&mut self) {
+        for handle in &mut self.text_inputs {
+            if handle.applied.take().is_some() {
+                handle.proxy.disable();
+                handle.proxy.commit();
+            }
+        }
+    }
+
     fn request_redraw(&mut self, queue_handle: &QueueHandle<Self>) {
         self.redraw_requested = true;
         if !self.frame_pending {
@@ -299,7 +425,7 @@ impl Patin {
             )
             .expect("CPU rendering failed");
 
-        let surface = self.layer.wl_surface();
+        let surface = self.role.wl_surface();
         if let Some(viewport) = &self.viewport {
             surface.set_buffer_scale(1);
             viewport.set_destination(logical_width as i32, logical_height as i32);
@@ -321,7 +447,7 @@ impl Patin {
         buffer
             .attach_to(surface)
             .expect("shared-memory buffer attachment failed");
-        self.layer.commit();
+        self.role.commit();
 
         self.frame_pending = true;
         self.redraw_requested = false;
@@ -338,6 +464,7 @@ impl Patin {
 
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
         let redraw = self.shell.activate_at(position);
+        self.sync_text_input();
         if self.shell.close_requested() {
             self.exit = true;
         } else if redraw {
@@ -367,6 +494,50 @@ impl LayerShellHandler for Patin {
         let size = (
             configure.new_size.0.max(self.requested_size.0).max(1),
             configure.new_size.1.max(self.requested_size.1).max(1),
+        );
+        if self.logical_size != Some(size) {
+            self.logical_size = Some(size);
+            self.shell.resize(Size {
+                width: size.0 as f32,
+                height: size.1 as f32,
+            });
+            self.request_redraw(queue_handle);
+        }
+    }
+}
+
+impl WindowHandler for Patin {
+    fn request_close(
+        &mut self,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+        _window: &Window,
+    ) {
+        self.disable_text_input();
+        self.exit = true;
+    }
+
+    fn configure(
+        &mut self,
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+        _window: &Window,
+        configure: WindowConfigure,
+        _serial: u32,
+    ) {
+        let size = (
+            configure
+                .new_size
+                .0
+                .map(|value| value.get())
+                .unwrap_or(self.requested_size.0)
+                .max(1),
+            configure
+                .new_size
+                .1
+                .map(|value| value.get())
+                .unwrap_or(self.requested_size.1)
+                .max(1),
         );
         if self.logical_size != Some(size) {
             self.logical_size = Some(size);
@@ -474,6 +645,66 @@ impl Dispatch<WpViewport, ()> for Patin {
     }
 }
 
+impl Dispatch<ZwpTextInputManagerV3, ()> for Patin {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpTextInputManagerV3,
+        _event: <ZwpTextInputManagerV3 as smithay_client_toolkit::reexports::client::Proxy>::Event,
+        _data: &(),
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+    ) {
+        unreachable!("zwp_text_input_manager_v3 has no events")
+    }
+}
+
+impl Dispatch<ZwpTextInputV3, ()> for Patin {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwpTextInputV3,
+        event: zwp_text_input_v3::Event,
+        _data: &(),
+        _connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+    ) {
+        let Some(index) = state
+            .text_inputs
+            .iter()
+            .position(|handle| handle.proxy == *proxy)
+        else {
+            return;
+        };
+        match event {
+            zwp_text_input_v3::Event::Enter { surface } => {
+                state.text_inputs[index].entered = surface == *state.role.wl_surface();
+                state.sync_text_input();
+            }
+            zwp_text_input_v3::Event::Leave { .. } => {
+                let handle = &mut state.text_inputs[index];
+                if handle.applied.is_some() {
+                    handle.proxy.disable();
+                    handle.proxy.commit();
+                }
+                handle.entered = false;
+                handle.applied = None;
+                handle.pending_commit = None;
+            }
+            zwp_text_input_v3::Event::CommitString { text } => {
+                state.text_inputs[index].pending_commit = text;
+            }
+            zwp_text_input_v3::Event::Done { .. } => {
+                if let Some(text) = state.text_inputs[index].pending_commit.take()
+                    && state.shell.key_input(KeyInput::Text(text))
+                {
+                    state.request_redraw(queue_handle);
+                }
+                state.sync_text_input();
+            }
+            _ => {}
+        }
+    }
+}
+
 impl ShmHandler for Patin {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
@@ -518,9 +749,20 @@ impl SeatHandler for Patin {
     fn new_seat(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
-        _seat: wl_seat::WlSeat,
+        queue_handle: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
     ) {
+        if let Some(manager) = &self.text_input_manager
+            && !self.text_inputs.iter().any(|known| known.seat == seat)
+        {
+            self.text_inputs.push(TextInputHandle {
+                proxy: manager.get_text_input(&seat, queue_handle, ()),
+                seat,
+                entered: false,
+                applied: None,
+                pending_commit: None,
+            });
+        }
     }
 
     fn new_capability(
@@ -607,7 +849,15 @@ impl SeatHandler for Patin {
     ) {
         self.remove_capability(connection, queue_handle, seat.clone(), Capability::Pointer);
         self.remove_capability(connection, queue_handle, seat.clone(), Capability::Touch);
-        self.remove_capability(connection, queue_handle, seat, Capability::Keyboard);
+        self.remove_capability(connection, queue_handle, seat.clone(), Capability::Keyboard);
+        self.text_inputs.retain(|handle| {
+            if handle.seat == seat {
+                handle.proxy.destroy();
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 
@@ -659,6 +909,7 @@ impl KeyboardHandler for Patin {
         {
             self.request_redraw(queue_handle);
         }
+        self.sync_text_input();
         if self.shell.close_requested() {
             self.exit = true;
         }
@@ -707,7 +958,7 @@ impl PointerHandler for Patin {
         events: &[PointerEvent],
     ) {
         for event in events {
-            if &event.surface != self.layer.wl_surface() {
+            if &event.surface != self.role.wl_surface() {
                 continue;
             }
 

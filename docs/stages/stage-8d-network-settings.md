@@ -12,9 +12,10 @@ moving system networking into Patin or 0xin.
 Wayland advertises keyboard capability per seat, like pointer and touch. The
 regular platform now creates those keyboards dynamically and translates xkb
 press/repeat events into toolkit-owned `KeyInput`. Adaptive touch-key geometry,
-drawing, shift, and symbol state moved from the lock to `patin::keyboard`.
-The lock continues to own zeroized password storage, PAM, and session-lock
-behavior.
+drawing, shift, and symbol state initially moved from the lock to
+`patin::keyboard`. Stage 8e later corrected that boundary: the special lock
+keyboard returned to the lock, while normal settings fields use the session
+OSK.
 
 `patin-service-network` now distinguishes hardware availability, radio
 enablement, active signal, and hotspot state. D-Bus supplies live state;
@@ -24,7 +25,7 @@ PolicyKit denials, are returned to the UI.
 
 ## Composition
 
-`patin-network-settings` is a separate overlay process. Its Wi-Fi page provides
+`patin-network-settings` was initially a separate overlay process. Its Wi-Fi page provides
 radio control, scan/connect/disconnect/forget, and one persistent `Patin
 Hotspot` profile using AP mode and IPv4 sharing. SSID, password, open or
 WPA-personal security, and automatic/2.4/5 GHz band are editable. Its Cellular

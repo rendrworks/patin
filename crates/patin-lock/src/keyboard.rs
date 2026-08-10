@@ -1,6 +1,6 @@
 //! Reusable touch keyboard geometry, state, hit-testing, and drawing.
 
-use crate::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
+use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Key {

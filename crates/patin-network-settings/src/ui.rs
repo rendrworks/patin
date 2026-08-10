@@ -1,6 +1,5 @@
 use patin::{
-    keyboard::{Key, KeyboardMode, TouchKeyboard},
-    platform::{KeyInput, Shell},
+    platform::{KeyInput, Shell, TextInputPurpose},
     service::Provider,
     ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign},
 };
@@ -60,7 +59,6 @@ pub struct NetworkSettings {
     hotspot_password: Zeroizing<String>,
     wifi_password: Zeroizing<String>,
     editing: Option<Editing>,
-    keyboard: TouchKeyboard,
     buttons: Vec<Button>,
     error: Option<String>,
     close: bool,
@@ -87,7 +85,6 @@ impl NetworkSettings {
             hotspot_password: Zeroizing::new(String::new()),
             wifi_password: Zeroizing::new(String::new()),
             editing: None,
-            keyboard: TouchKeyboard::new(KeyboardMode::Full),
             buttons: Vec::new(),
             error: None,
             close: false,
@@ -185,13 +182,23 @@ impl NetworkSettings {
                 y += ROW + 6.0;
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
-                    &format!("SSID: {}", self.hotspot.ssid),
+                    &format!(
+                        "{}SSID: {}",
+                        if self.editing == Some(Editing::HotspotSsid) {
+                            "Editing • "
+                        } else {
+                            ""
+                        },
+                        self.hotspot.ssid
+                    ),
                     Action::EditHotspotSsid,
                 );
                 y += ROW + 6.0;
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
-                    if self.hotspot_password.is_empty() {
+                    if self.editing == Some(Editing::HotspotPassword) {
+                        "Editing • Password: ••••••••"
+                    } else if self.hotspot_password.is_empty() {
                         "Set hotspot password"
                     } else {
                         "Password: ••••••••"
@@ -233,23 +240,28 @@ impl NetworkSettings {
         self.redraw();
     }
 
-    fn edit_key(&mut self, key: Key) {
+    fn edit_input(&mut self, input: KeyInput) {
         let Some(editing) = self.editing else { return };
         let target: &mut String = match editing {
             Editing::WifiPassword(_) => &mut self.wifi_password,
             Editing::HotspotSsid => &mut self.hotspot.ssid,
             Editing::HotspotPassword => &mut self.hotspot_password,
         };
-        match key {
-            Key::Character(character) if target.len() + character.len_utf8() <= 63 => {
-                target.push(character)
+        match input {
+            KeyInput::Text(text) => {
+                for character in text.chars() {
+                    if target.len() + character.len_utf8() <= 63 {
+                        target.push(character);
+                    }
+                }
             }
-            Key::Space if target.len() < 63 => target.push(' '),
-            Key::Backspace => {
+            KeyInput::Backspace => {
                 target.pop();
             }
-            Key::Enter => self.submit_edit(),
-            _ => {}
+            KeyInput::Enter => self.submit_edit(),
+            KeyInput::Escape => {
+                self.editing = None;
+            }
         }
         self.redraw();
     }
@@ -271,7 +283,10 @@ impl NetworkSettings {
 
     fn act(&mut self, action: Action) {
         match action {
-            Action::Close => self.close = true,
+            Action::Close => {
+                self.editing = None;
+                self.close = true;
+            }
             Action::WifiPage => {
                 self.page = Page::Wifi;
                 self.editing = None;
@@ -387,15 +402,6 @@ impl Shell for NetworkSettings {
         }
     }
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
-        if self.editing.is_some()
-            && let Some(key) = self
-                .keyboard
-                .key_at(self.size.width, self.size.height, position)
-                .and_then(|key| self.keyboard.press(key))
-        {
-            self.edit_key(key);
-            return true;
-        }
         if let Some(action) = self
             .buttons
             .iter()
@@ -408,21 +414,21 @@ impl Shell for NetworkSettings {
         false
     }
     fn key_input(&mut self, input: KeyInput) -> bool {
-        match input {
-            KeyInput::Text(text) => {
-                for character in text.chars() {
-                    self.edit_key(Key::Character(character));
-                }
-            }
-            KeyInput::Backspace => self.edit_key(Key::Backspace),
-            KeyInput::Enter => self.edit_key(Key::Enter),
-            KeyInput::Escape => {
-                if self.editing.take().is_none() {
-                    self.close = true;
-                }
-            }
+        if self.editing.is_some() {
+            self.edit_input(input);
+        } else if input == KeyInput::Escape {
+            self.close = true;
         }
         true
+    }
+    fn text_input(&self) -> Option<TextInputPurpose> {
+        match self.editing {
+            Some(Editing::HotspotSsid) => Some(TextInputPurpose::Normal),
+            Some(Editing::WifiPassword(_) | Editing::HotspotPassword) => {
+                Some(TextInputPurpose::Password)
+            }
+            None => None,
+        }
     }
     fn close_requested(&self) -> bool {
         self.close
@@ -447,11 +453,23 @@ impl Shell for NetworkSettings {
                 13.0,
             ));
         }
-        if self.editing.is_some() {
-            commands.extend(
-                self.keyboard
-                    .commands(self.size.width, self.size.height, false),
-            );
+        if let Some(Editing::WifiPassword(index)) = self.editing
+            && let Some(network) = self.networks.get(index)
+        {
+            commands.push(DrawCommand::RoundedFill {
+                bounds: Rect::new(16.0, self.size.height - 76.0, self.size.width - 32.0, 52.0),
+                color: Color(75, 62, 98, 255),
+                radius: 10.0,
+            });
+            commands.push(text(
+                Rect::new(28.0, self.size.height - 76.0, self.size.width - 56.0, 52.0),
+                &format!(
+                    "Password for {}: {}",
+                    network.ssid,
+                    "•".repeat(self.wifi_password.chars().count())
+                ),
+                14.0,
+            ));
         }
         commands
     }
@@ -488,5 +506,21 @@ mod tests {
         let mut ui = NetworkSettings::new(Some("wifi"));
         ui.key_input(KeyInput::Escape);
         assert!(ui.close_requested());
+    }
+
+    #[test]
+    fn editing_exposes_system_text_input_purpose() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        assert_eq!(ui.text_input(), None);
+
+        ui.editing = Some(Editing::HotspotSsid);
+        assert_eq!(ui.text_input(), Some(TextInputPurpose::Normal));
+
+        ui.editing = Some(Editing::HotspotPassword);
+        assert_eq!(ui.text_input(), Some(TextInputPurpose::Password));
+
+        ui.key_input(KeyInput::Escape);
+        assert_eq!(ui.text_input(), None);
+        assert!(!ui.close_requested());
     }
 }
