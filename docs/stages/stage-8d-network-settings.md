@@ -40,11 +40,17 @@ the executable; `--page=hotspot` is available to other launchers and all three
 pages remain reachable through tabs. No 0xin-specific code is involved.
 
 Window construction does not perform NetworkManager or `nmcli` discovery.
-The first regular shell update loads the status snapshot, Wi-Fi list, and
-hotspot profile after the compositor has had a chance to configure and draw
-the XDG window. Until then, the selected page explicitly says it is loading.
-This preserves the same data and refresh operations without making a cold
-Wi-Fi scan part of perceived launch time.
+The first regular shell update loads the status snapshot, hotspot profile, and
+the existing NetworkManager Wi-Fi cache after the compositor has had a chance
+to configure and draw the XDG window. The cache is filtered to the connected
+network and saved profiles that are currently visible; saved profiles that are
+out of range and unknown nearby networks are not presented as available.
+
+The Wi-Fi page's explicit `Scan for new networks` action schedules
+`nmcli --rescan yes` for the next shell update. Its label changes to a scanning
+state before the synchronous operation starts, and successful results replace
+the filtered list with every discovered network. Thus a radio scan occurs only
+after user intent and never forms part of perceived launch time.
 
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
 hotspots, and a PolicyKit agent are later work.

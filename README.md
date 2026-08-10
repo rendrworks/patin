@@ -107,7 +107,10 @@ use Wayland text-input-v3 to request the session OSK; physical keyboard input
 and a compositor's manual OSK gesture remain available fallbacks.
 The XDG window is created before the initial NetworkManager refresh, so cold
 Wi-Fi discovery cannot delay the window appearing; each page shows a loading
-label until that first refresh completes.
+label until that first refresh completes. The initial Wi-Fi list uses
+NetworkManager's current cache and shows only the connected network and saved
+networks that are presently available. “Scan for new networks” explicitly
+requests a radio rescan and then shows every discovered network.
 
 Library consumers implement `patin::platform::Shell`, then choose either
 layer-shell `run` for shell surfaces or `run_window` for an XDG toplevel.

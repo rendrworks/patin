@@ -43,6 +43,10 @@ The client creates and commits its XDG toplevel before its initial synchronous
 network refresh. Network data is loaded by the first one-second shell update;
 an explicit loading label prevents the default snapshot from being presented
 as real state while allowing the compositor to map the window immediately.
+The initial Wi-Fi refresh reads cached availability and saved profiles without
+requesting a scan; scanning for unknown networks is a separate button action.
+The window's close control is a centered `×`, distinct from the left-aligned
+setting rows.
 
 Launcher search is deliberately not part of this stage. It will become the
 next consumer of the same window/text-input boundary without importing lock
@@ -55,7 +59,7 @@ Local verification on 2026-08-10:
 ```text
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
-  37 passed; 0 failed
+  42 passed; 0 failed
 cargo clippy --workspace --all-targets --all-features -- -D warnings
   finished successfully
 mdbook build

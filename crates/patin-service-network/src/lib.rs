@@ -6,7 +6,7 @@
 //! rather than collapsing everything into one "primary" connection.
 
 use patin::service::Provider;
-use std::{fmt, process::Command};
+use std::{collections::HashSet, fmt, process::Command};
 use zbus::zvariant::OwnedObjectPath;
 
 const HOTSPOT_PROFILE: &str = "Patin Hotspot";
@@ -99,6 +99,20 @@ impl NetworkProvider {
     }
 
     pub fn wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
+        self.scan_wifi_networks()
+    }
+
+    pub fn known_wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
+        let networks = self.visible_wifi_networks(false)?;
+        let known_ssids = wifi_profiles()?.into_iter().map(|(_, ssid)| ssid).collect();
+        Ok(filter_known_wifi_networks(networks, &known_ssids))
+    }
+
+    pub fn scan_wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
+        self.visible_wifi_networks(true)
+    }
+
+    fn visible_wifi_networks(&self, rescan: bool) -> Result<Vec<WifiNetwork>, NetworkError> {
         let output = nmcli(&[
             "--terse",
             "--escape",
@@ -109,7 +123,7 @@ impl NetworkProvider {
             "wifi",
             "list",
             "--rescan",
-            "yes",
+            if rescan { "yes" } else { "no" },
         ])?;
         let mut networks = Vec::<WifiNetwork>::new();
         for line in output.lines() {
@@ -186,25 +200,10 @@ impl NetworkProvider {
     }
 
     pub fn forget_wifi(&self, ssid: &str) -> Result<(), NetworkError> {
-        let profiles = nmcli(&[
-            "--terse",
-            "--escape",
-            "yes",
-            "--fields",
-            "UUID,TYPE,802-11-wireless.SSID",
-            "connection",
-            "show",
-        ])?;
-        let uuid = profiles
-            .lines()
-            .filter_map(|line| {
-                let fields = split_escaped(line);
-                (fields.len() == 3).then_some(fields)
-            })
-            .find(|fields| fields[1] == "802-11-wireless" && fields[2] == ssid)
-            .map(|fields| fields[0].clone())
+        let profiles = wifi_profiles()?;
+        let uuid = wifi_profile_uuid(&profiles, ssid)
             .ok_or_else(|| NetworkError(format!("no saved profile for {ssid}")))?;
-        nmcli(&["connection", "delete", "uuid", &uuid]).map(|_| ())
+        nmcli(&["connection", "delete", "uuid", uuid]).map(|_| ())
     }
 
     pub fn hotspot_config(&self) -> HotspotConfig {
@@ -344,6 +343,62 @@ impl NetworkProvider {
         }
         Ok(())
     }
+}
+
+fn filter_known_wifi_networks(
+    networks: Vec<WifiNetwork>,
+    known_ssids: &HashSet<String>,
+) -> Vec<WifiNetwork> {
+    networks
+        .into_iter()
+        .filter(|network| network.active || known_ssids.contains(&network.ssid))
+        .collect()
+}
+
+fn wifi_profile_uuids(profiles: &str) -> Vec<String> {
+    profiles
+        .lines()
+        .filter_map(|line| {
+            let fields = split_escaped(line);
+            (fields.len() == 2 && fields[1] == "802-11-wireless" && !fields[0].is_empty())
+                .then(|| fields[0].clone())
+        })
+        .collect()
+}
+
+fn wifi_profiles() -> Result<Vec<(String, String)>, NetworkError> {
+    let overview = nmcli(&[
+        "--terse",
+        "--escape",
+        "yes",
+        "--fields",
+        "UUID,TYPE",
+        "connection",
+        "show",
+    ])?;
+    Ok(wifi_profile_uuids(&overview)
+        .into_iter()
+        .filter_map(|uuid| {
+            nmcli(&[
+                "--get-values",
+                "802-11-wireless.ssid",
+                "connection",
+                "show",
+                "uuid",
+                &uuid,
+            ])
+            .ok()
+            .map(|ssid| (uuid, ssid.trim().to_owned()))
+        })
+        .filter(|(_, ssid)| !ssid.is_empty())
+        .collect())
+}
+
+fn wifi_profile_uuid<'a>(profiles: &'a [(String, String)], ssid: &str) -> Option<&'a str> {
+    profiles
+        .iter()
+        .find(|(_, profile_ssid)| profile_ssid == ssid)
+        .map(|(uuid, _)| uuid.as_str())
 }
 
 impl Default for NetworkProvider {
@@ -550,7 +605,13 @@ fn validate_hotspot(
 
 #[cfg(test)]
 mod tests {
-    use super::{NetworkProvider, NetworkSnapshot, Provider, split_escaped, validate_hotspot};
+    use std::collections::HashSet;
+
+    use super::{
+        NetworkProvider, NetworkSnapshot, Provider, WifiNetwork, WifiSecurity,
+        filter_known_wifi_networks, split_escaped, validate_hotspot, wifi_profile_uuid,
+        wifi_profile_uuids,
+    };
 
     #[test]
     fn disconnected_snapshot_has_no_active_transport() {
@@ -580,6 +641,55 @@ mod tests {
         assert_eq!(
             split_escaped("*:Cafe\\: upstairs:77:WPA2"),
             ["*", "Cafe: upstairs", "77", "WPA2"]
+        );
+    }
+
+    #[test]
+    fn selects_wifi_profile_uuids_from_valid_overview_fields() {
+        assert_eq!(
+            wifi_profile_uuids(
+                "wifi-uuid:802-11-wireless\nethernet-uuid:802-3-ethernet\n:802-11-wireless"
+            ),
+            ["wifi-uuid"]
+        );
+    }
+
+    #[test]
+    fn selects_saved_profile_uuid_by_actual_ssid() {
+        let profiles = vec![
+            ("delta-uuid".into(), "DELTA-6c60c4".into()),
+            ("ziggo-uuid".into(), "Ziggo7827342".into()),
+        ];
+        assert_eq!(
+            wifi_profile_uuid(&profiles, "Ziggo7827342"),
+            Some("ziggo-uuid")
+        );
+        assert_eq!(wifi_profile_uuid(&profiles, "Unknown"), None);
+    }
+
+    #[test]
+    fn known_list_keeps_connected_and_saved_visible_networks() {
+        let network = |ssid: &str, active| WifiNetwork {
+            ssid: ssid.into(),
+            strength: 50,
+            security: WifiSecurity::Personal,
+            active,
+        };
+        let known_ssids = HashSet::from(["Home".to_owned()]);
+
+        assert_eq!(
+            filter_known_wifi_networks(
+                vec![
+                    network("Connected", true),
+                    network("Home", false),
+                    network("New cafe", false),
+                ],
+                &known_ssids,
+            )
+            .iter()
+            .map(|network| network.ssid.as_str())
+            .collect::<Vec<_>>(),
+            ["Connected", "Home"]
         );
     }
 

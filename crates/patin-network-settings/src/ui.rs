@@ -25,6 +25,7 @@ enum Action {
     CellularPage,
     HotspotPage,
     ToggleWifi,
+    ScanWifi,
     ToggleCellular,
     Connect(usize),
     Disconnect,
@@ -42,6 +43,7 @@ struct Button {
     bounds: Rect,
     label: String,
     action: Action,
+    text_align: TextAlign,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +66,7 @@ pub struct NetworkSettings {
     buttons: Vec<Button>,
     error: Option<String>,
     initial_refresh_pending: bool,
+    scan_pending: bool,
     close: bool,
     damage: Vec<Rect>,
 }
@@ -88,6 +91,7 @@ impl NetworkSettings {
             buttons: Vec::new(),
             error: None,
             initial_refresh_pending: true,
+            scan_pending: false,
             close: false,
             damage: Vec::new(),
         };
@@ -99,7 +103,7 @@ impl NetworkSettings {
         self.buttons.clear();
         let width = self.size.width.clamp(1.0, 520.0);
         let left = (self.size.width - width) / 2.0;
-        self.button(Rect::new(left + 12.0, 14.0, 48.0, 40.0), "‹", Action::Close);
+        self.centered_button(Rect::new(left + 12.0, 14.0, 48.0, 40.0), "×", Action::Close);
         let tab_width = (width - 90.0) / 3.0;
         self.button(
             Rect::new(left + 72.0, 14.0, tab_width, 40.0),
@@ -131,6 +135,16 @@ impl NetworkSettings {
                     Action::ToggleWifi,
                 );
                 y += ROW + 6.0;
+                self.button(
+                    Rect::new(left + 16.0, y, width - 32.0, ROW),
+                    if self.scan_pending {
+                        "Scanning for new networks…"
+                    } else {
+                        "Scan for new networks"
+                    },
+                    Action::ScanWifi,
+                );
+                y += ROW + 6.0;
                 if self.snapshot.wifi.is_some() {
                     self.button(
                         Rect::new(left + 16.0, y, width - 32.0, ROW),
@@ -139,7 +153,9 @@ impl NetworkSettings {
                     );
                     y += ROW + 6.0;
                 }
-                let max_rows = if self.editing.is_some() { 2 } else { 5 };
+                let row_capacity =
+                    ((self.size.height - y + 6.0).max(0.0) / (ROW + 6.0)).floor() as usize;
+                let max_rows = row_capacity.min(if self.editing.is_some() { 2 } else { 5 });
                 for index in 0..self.networks.len().min(max_rows) {
                     let network = &self.networks[index];
                     let suffix = if network.active { " • connected" } else { "" };
@@ -239,6 +255,15 @@ impl NetworkSettings {
             bounds,
             label: label.into(),
             action,
+            text_align: TextAlign::Start,
+        });
+    }
+    fn centered_button(&mut self, bounds: Rect, label: &str, action: Action) {
+        self.buttons.push(Button {
+            bounds,
+            label: label.into(),
+            action,
+            text_align: TextAlign::Center,
         });
     }
     fn redraw(&mut self) {
@@ -315,6 +340,13 @@ impl NetworkSettings {
             Action::ToggleWifi => {
                 let result = self.provider.set_wifi_enabled(!self.snapshot.wifi_enabled);
                 self.result(result);
+            }
+            Action::ScanWifi => {
+                if !self.scan_pending {
+                    self.scan_pending = true;
+                    self.error = None;
+                    self.redraw();
+                }
             }
             Action::ToggleCellular => {
                 let result = self
@@ -410,11 +442,23 @@ impl Shell for NetworkSettings {
         if self.initial_refresh_pending {
             self.initial_refresh_pending = false;
             self.snapshot = self.provider.poll().unwrap_or_default();
-            match self.provider.wifi_networks() {
+            match self.provider.known_wifi_networks() {
                 Ok(networks) => self.networks = networks,
                 Err(error) => self.error = Some(error.to_string()),
             }
             self.hotspot = self.provider.hotspot_config();
+            self.redraw();
+            return true;
+        }
+        if self.scan_pending {
+            self.scan_pending = false;
+            match self.provider.scan_wifi_networks() {
+                Ok(networks) => {
+                    self.networks = networks;
+                    self.error = None;
+                }
+                Err(error) => self.error = Some(error.to_string()),
+            }
             self.redraw();
             return true;
         }
@@ -470,7 +514,16 @@ impl Shell for NetworkSettings {
                 color: Color(57, 48, 75, 255),
                 radius: 10.0,
             });
-            commands.push(text(button.bounds.inset(10.0), &button.label, 15.0));
+            commands.push(aligned_text(
+                if button.text_align == TextAlign::Center {
+                    button.bounds
+                } else {
+                    button.bounds.inset(10.0)
+                },
+                &button.label,
+                15.0,
+                button.text_align,
+            ));
         }
         if let Some(error) = &self.error {
             commands.push(text(
@@ -508,6 +561,10 @@ impl Shell for NetworkSettings {
 }
 
 fn text(bounds: Rect, value: &str, size: f32) -> DrawCommand {
+    aligned_text(bounds, value, size, TextAlign::Start)
+}
+
+fn aligned_text(bounds: Rect, value: &str, size: f32, align: TextAlign) -> DrawCommand {
     DrawCommand::Text {
         bounds,
         text: value.into(),
@@ -516,7 +573,7 @@ fn text(bounds: Rect, value: &str, size: f32) -> DrawCommand {
         line_height: size * 1.25,
         family: FontFamily::SansSerif,
         weight: FontWeight::Normal,
-        align: TextAlign::Start,
+        align,
     }
 }
 
@@ -541,6 +598,51 @@ mod tests {
                 .iter()
                 .any(|button| button.label == "Wi-Fi: loading…")
         );
+    }
+
+    #[test]
+    fn scan_is_explicit_and_close_is_centered() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        assert!(!ui.scan_pending);
+        assert!(ui.buttons.iter().any(|button| {
+            matches!(button.action, Action::ScanWifi) && button.label == "Scan for new networks"
+        }));
+        assert!(ui.buttons.iter().any(|button| {
+            matches!(button.action, Action::Close)
+                && button.label == "×"
+                && button.text_align == TextAlign::Center
+        }));
+
+        ui.act(Action::ScanWifi);
+        assert!(ui.scan_pending);
+        assert!(
+            ui.buttons
+                .iter()
+                .any(|button| button.label == "Scanning for new networks…")
+        );
+    }
+
+    #[test]
+    fn scan_row_keeps_network_buttons_inside_minimum_height() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        ui.initial_refresh_pending = false;
+        ui.snapshot.wifi = Some(80);
+        ui.networks = (0..5)
+            .map(|index| WifiNetwork {
+                ssid: format!("Network {index}"),
+                strength: 50,
+                security: WifiSecurity::Personal,
+                active: index == 0,
+            })
+            .collect();
+        ui.resize(Size {
+            width: 320.0,
+            height: 480.0,
+        });
+
+        assert!(ui.buttons.iter().all(|button| {
+            button.bounds.origin.y + button.bounds.size.height <= ui.size.height
+        }));
     }
 
     #[test]
