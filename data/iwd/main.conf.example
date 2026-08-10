@@ -1,0 +1,9 @@
+# Merge these settings into /etc/iwd/main.conf. Do not blindly overwrite an
+# existing file: it may contain country, roaming, or privacy configuration.
+
+[General]
+EnableNetworkConfiguration=true
+
+[Network]
+# Use "resolvconf" instead on systems where openresolv owns /etc/resolv.conf.
+NameResolvingService=systemd

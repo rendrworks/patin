@@ -21,7 +21,7 @@ instantiated by the library:
    PAM authentication.
 8. **Composition templates** — exercise phone navigation, launchers, quick
    settings, notifications, and keyboard control without making them defaults.
-   Network settings now cover Wi-Fi, mobile-data, and hotspot essentials;
+   Network settings now cover Wi-Fi, modem power, and hotspot essentials;
    advanced IP/DNS, APN, roaming, and enterprise enrollment remain later work.
 9. **Compositor integration** — add a replaceable adapter for 0xin workspace
    state and commands.

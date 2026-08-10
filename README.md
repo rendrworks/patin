@@ -40,8 +40,8 @@ implement `patin::service::Provider` against a specific system service:
 - `patin-service-upower` — battery state over D-Bus/UPower.
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
-- `patin-service-network` — connectivity state over D-Bus/NetworkManager.
-- `patin-network-settings` — independently launched Wi-Fi, mobile-data, and hotspot controls.
+- `patin-service-network` — Wi-Fi/iwd and cellular/ModemManager state and control.
+- `patin-network-settings` — independently launched Wi-Fi, modem, and hotspot controls.
 - `patin-launcher` — an independently launched, touch-friendly application list.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
@@ -85,17 +85,24 @@ matching page.
 
 ### Install and run network settings
 
-NetworkManager remains the system daemon; Patin is its frontend. The separate
-composition scans and joins Wi-Fi, toggles mobile data, and manages one
-persistent hotspot profile with editable SSID, password, security, and band:
+iwd remains the Wi-Fi daemon; Patin is its frontend. The separate composition
+scans and joins Wi-Fi, controls the cellular modem through ModemManager, and
+manages one persistent WPA-personal hotspot with editable SSID and password:
 
 ```sh
 ./scripts/install-network-settings-user.sh
 patin-network-settings --page=wifi
 ```
 
-Profile operations use NetworkManager's `nmcli` client. PolicyKit remains
-session policy; Patin displays authorization failures but is not an auth agent.
+All operations use the daemons' D-Bus APIs; there is no NetworkManager,
+`nmcli`, or `iwctl` runtime dependency. Patin temporarily registers an iwd
+credential agent while the settings process is running.
+
+iwd must own Wi-Fi IP configuration for station and AP modes. Merge
+`data/iwd/main.conf.example` into `/etc/iwd/main.conf` and select the resolver
+appropriate to the system. Do not also let systemd-networkd configure the WLAN
+link. iwd supplies the hotspot address and DHCP server, while internet
+forwarding/masquerading remains host policy and needs FP5-specific verification.
 
 Library consumers implement `patin::platform::Shell`, choose a `LayerConfig`,
 and pass both to `patin::platform::run`.

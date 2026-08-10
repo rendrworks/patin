@@ -51,12 +51,11 @@ demo bar deliberately does not instantiate it.
 
 ## Network
 
-`crates/patin-service-network`'s `NetworkProvider` (see
-[Stage 6e](stages/stage-6e-multi-transport-network.md)) reads every active
-NetworkManager connection over D-Bus. A wifi connection additionally walks
-`ActiveConnection.Devices` → `Device.Wireless.ActiveAccessPoint` →
-`AccessPoint.Strength` for a signal percentage; ethernet sets the independent
-`wired` field.
+`crates/patin-service-network`'s `NetworkProvider` originally used
+NetworkManager (see the historical [Stage 6e](stages/stage-6e-multi-transport-network.md)).
+It now enumerates iwd's standard D-Bus object manager, reads device/station/AP
+state, and maps iwd's ordered-network signal values to a percentage. Linux
+sysfs supplies independent wired carrier state.
 
 The same provider discovers modem objects through ModemManager's standard
 ObjectManager interface. A registered modem contributes its independent
@@ -69,7 +68,8 @@ bars. Only active/registered transport icons receive slots.
 The current snapshot also reports hardware availability, radio enablement, and
 the Patin hotspot state. This keeps disconnected radios visible without naming
 an interface or phone model. Explicit control methods back the independent
-network-settings composition; NetworkManager still owns profiles and sharing.
+network-settings composition. iwd owns Wi-Fi profiles and AP mode;
+ModemManager owns cellular state.
 
 ## Polling
 

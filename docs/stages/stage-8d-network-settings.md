@@ -2,10 +2,10 @@
 
 ## Why this stage exists
 
-NetworkManager, not Phosh or a compositor, owns Linux connection profiles,
-radio state, and shared-hotspot routing. Patin already displayed its state but
-could not change it. This milestone adds a phone-oriented frontend without
-moving system networking into Patin or 0xin.
+iwd, not Phosh or a compositor, owns Wi-Fi association and access-point mode.
+ModemManager independently owns the cellular modem. Patin is a phone-oriented
+frontend to those daemons; neither networking nor daemon policy moves into
+Patin or 0xin.
 
 ## Toolkit and Linux mechanisms
 
@@ -16,19 +16,29 @@ drawing, shift, and symbol state moved from the lock to `patin::keyboard`.
 The lock continues to own zeroized password storage, PAM, and session-lock
 behavior.
 
-`patin-service-network` now distinguishes hardware availability, radio
-enablement, active signal, and hotspot state. D-Bus supplies live state;
-NetworkManager's `nmcli` frontend handles scans and profile mutations, keeping
-profile serialization and secrets inside NetworkManager. Errors, including
-PolicyKit denials, are returned to the UI.
+`patin-service-network` distinguishes hardware availability, radio enablement,
+active signal, and hotspot state by enumerating iwd's D-Bus object manager.
+It calls iwd directly for scans, radio power, connection, disconnection,
+forgetting known networks, device-mode changes, and AP start/stop. A temporary
+credential agent answers iwd's passphrase request for a user-selected network.
+ModemManager D-Bus supplies signal and modem power. There is no NetworkManager,
+`nmcli`, or `iwctl` dependency.
 
 ## Composition
 
 `patin-network-settings` is a separate overlay process. Its Wi-Fi page provides
-radio control, scan/connect/disconnect/forget, and one persistent `Patin
-Hotspot` profile using AP mode and IPv4 sharing. SSID, password, open or
-WPA-personal security, and automatic/2.4/5 GHz band are editable. Its Cellular
-page provides the NetworkManager mobile-data toggle and registration state.
+radio control, scan/connect/disconnect/forget, and one WPA-personal hotspot.
+Patin stores its SSID and password as hex-encoded UTF-8 in a mode-0600 user
+configuration file, then supplies them to iwd's dynamic AP API. iwd selects the
+channel automatically. Its Cellular page controls ModemManager modem power and
+shows registration signal.
+
+iwd must be configured with `EnableNetworkConfiguration=true`; it then owns
+the WLAN's station DHCP client plus AP address and DHCP server. An example
+`main.conf` fragment is provided. systemd-networkd may manage other links but
+must leave the WLAN unmanaged. iwd does not install internet-sharing NAT, so
+forwarding/masquerading remains host policy and is part of the FP5 acceptance
+test rather than hidden in the graphical client.
 
 The demo bar retains dim Wi-Fi and cellular slots when the relevant runtime
 capability exists. Tapping a slot launches `--page=wifi` or `--page=cellular`,
@@ -36,7 +46,7 @@ with at most one child per bar. `PATIN_NETWORK_SETTINGS_PROGRAM` can replace
 the executable; no 0xin-specific code is involved.
 
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
-hotspots, and a PolicyKit agent are later work.
+hotspots, fixed AP bands, and automatic NAT policy are later work.
 
 ## Verification
 
@@ -47,7 +57,7 @@ $ cargo fmt --all -- --check
 (no output, exit 0)
 
 $ cargo test --workspace --all-targets
-34 passed, 0 failed
+35 passed, 0 failed
 
 $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Finished, no warnings
@@ -59,10 +69,10 @@ $ git diff --check
 (no output, exit 0)
 ```
 
-The sandbox has no Wayland compositor, NetworkManager service, or `nmcli`, so
-the final phone acceptance pass—joining Wi-Fi, changing mobile data, enabling
+The sandbox has no Wayland compositor, iwd, or ModemManager service, so
+the final phone acceptance pass—joining Wi-Fi, toggling modem power, enabling
 the hotspot, joining it from another device, and confirming persistence after
 a reboot—must be performed on the FP5 before treating device integration as
-confirmed. Unit coverage verifies unavailable-service degradation, escaped
-scan parsing, credential validation, page selection, keyboard behavior, and
-bar page routing without changing host network state.
+confirmed. Unit coverage verifies unavailable-service degradation, iwd signal
+mapping, hotspot credential/storage behavior, page selection, keyboard
+behavior, and bar page routing without changing host network state.

@@ -1,5 +1,8 @@
 # Stage 6e — Simultaneous Network Transports
 
+> This chapter records the original NetworkManager implementation. Stage 8d
+> replaced its Wi-Fi side with direct iwd integration.
+
 ## Why this stage exists
 
 A single `PrimaryConnection` cannot describe a phone with registered SIM

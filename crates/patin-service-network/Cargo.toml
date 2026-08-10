@@ -3,7 +3,7 @@ name = "patin-service-network"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Optional network status provider for Patin shells (NetworkManager)"
+description = "Optional iwd and ModemManager adapter for Patin shells"
 license.workspace = true
 publish.workspace = true
 

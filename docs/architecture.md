@@ -179,14 +179,12 @@ owns the domain outright:
 - `crates/patin-service-upower` polls UPower's `DisplayDevice` — the
   synthetic aggregate battery device UPower maintains for shells — over
   `zbus`'s blocking API.
-- `crates/patin-service-network` polls NetworkManager's active connections
-  plus access-point strength for wifi and wired state. It independently reads
-  registered modem signal from ModemManager, allowing wifi and cellular fields
-  to be populated simultaneously. Missing transports remain `None`/`false`
-  inside a real snapshot; an unavailable system bus returns `None`.
-  It also exposes explicit essential controls. NetworkManager's `nmcli`
-  frontend performs profile-heavy mutations so persistent settings and secrets
-  remain owned by NetworkManager.
+- `crates/patin-service-network` enumerates iwd objects for Wi-Fi device,
+  station, scan, known-network, and access-point state. It registers a temporary
+  iwd credential agent for new personal networks and uses ModemManager directly
+  for independent cellular state and modem power. There is no NetworkManager
+  or command-line frontend dependency. Wired carrier state is discovered from
+  Linux sysfs rather than an interface name.
 
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in

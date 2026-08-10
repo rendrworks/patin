@@ -1,15 +1,30 @@
-//! Optional network status provider for Patin shells.
+//! Optional iwd and ModemManager adapter for Patin shells.
 //!
-//! NetworkManager reports active wifi and wired transports while
-//! ModemManager reports independently registered cellular modems. Reading
-//! both services lets a shell represent simultaneous wifi and SIM service
-//! rather than collapsing everything into one "primary" connection.
+//! iwd owns Wi-Fi station/AP state and, when configured to do so, IP
+//! configuration. ModemManager independently reports and controls the modem.
 
 use patin::service::Provider;
-use std::{fmt, process::Command};
+use std::{
+    collections::HashMap,
+    fmt, fs,
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use zbus::zvariant::OwnedObjectPath;
 
-const HOTSPOT_PROFILE: &str = "Patin Hotspot";
+const IWD_SERVICE: &str = "net.connman.iwd";
+const IWD_ROOT: &str = "/net/connman/iwd";
+const DEVICE_INTERFACE: &str = "net.connman.iwd.Device";
+const STATION_INTERFACE: &str = "net.connman.iwd.Station";
+const NETWORK_INTERFACE: &str = "net.connman.iwd.Network";
+const KNOWN_NETWORK_INTERFACE: &str = "net.connman.iwd.KnownNetwork";
+const ACCESS_POINT_INTERFACE: &str = "net.connman.iwd.AccessPoint";
+const AGENT_PATH: &str = "/org/patin/IwdAgent";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NetworkSnapshot {
@@ -76,178 +91,155 @@ impl fmt::Display for NetworkError {
 
 impl std::error::Error for NetworkError {}
 
+struct CredentialAgent {
+    passphrase: Arc<Mutex<Option<String>>>,
+}
+
+#[zbus::interface(name = "net.connman.iwd.Agent")]
+impl CredentialAgent {
+    fn release(&self) {}
+
+    fn request_passphrase(&self, _network: OwnedObjectPath) -> zbus::fdo::Result<String> {
+        self.passphrase
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("credential state is unavailable".into()))?
+            .clone()
+            .ok_or_else(|| zbus::fdo::Error::Failed("no passphrase was supplied".into()))
+    }
+
+    fn cancel(&self, _reason: &str) {}
+}
+
 pub struct NetworkProvider {
     connection: Option<zbus::blocking::Connection>,
+    passphrase: Arc<Mutex<Option<String>>>,
+    agent_registered: AtomicBool,
 }
 
 impl NetworkProvider {
     pub fn new() -> Self {
+        let connection = zbus::blocking::Connection::system().ok();
+        let passphrase = Arc::new(Mutex::new(None));
         Self {
-            connection: zbus::blocking::Connection::system().ok(),
+            connection,
+            passphrase,
+            agent_registered: AtomicBool::new(false),
         }
     }
 
     pub fn wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
-        let output = nmcli(&[
-            "--terse",
-            "--escape",
-            "yes",
-            "--fields",
-            "IN-USE,SSID,SIGNAL,SECURITY",
-            "device",
-            "wifi",
-            "list",
-            "--rescan",
-            "yes",
-        ])?;
-        let mut networks = Vec::<WifiNetwork>::new();
-        for line in output.lines() {
-            let fields = split_escaped(line);
-            if fields.len() != 4 || fields[1].is_empty() {
-                continue;
-            }
-            let security = if fields[3].is_empty() || fields[3] == "--" {
-                WifiSecurity::Open
-            } else if fields[3].contains("WPA") || fields[3].contains("SAE") {
-                WifiSecurity::Personal
-            } else {
-                WifiSecurity::Unsupported
-            };
-            let candidate = WifiNetwork {
-                ssid: fields[1].clone(),
-                strength: fields[2].parse().unwrap_or(0),
-                security,
-                active: fields[0] == "*" || fields[0] == "yes",
-            };
-            if let Some(existing) = networks
-                .iter_mut()
-                .find(|network| network.ssid == candidate.ssid)
-            {
-                if candidate.strength > existing.strength {
-                    *existing = candidate;
-                }
-            } else {
-                networks.push(candidate);
-            }
+        let connection = self.connection()?;
+        let (_, station_path) = station_device(connection)?;
+        let station = proxy(connection, &station_path, STATION_INTERFACE)?;
+        let _: Result<(), zbus::Error> = station.call("Scan", &());
+        let ordered: Vec<(OwnedObjectPath, i16)> = station
+            .call("GetOrderedNetworks", &())
+            .map_err(dbus_error("could not read iwd scan results"))?;
+        let mut networks = Vec::new();
+        for (path, signal) in ordered {
+            let network = proxy(connection, &path, NETWORK_INTERFACE)?;
+            let ssid: String = network
+                .get_property("Name")
+                .map_err(dbus_error("could not read iwd network name"))?;
+            let kind: String = network.get_property("Type").unwrap_or_default();
+            let connected: bool = network.get_property("Connected").unwrap_or(false);
+            networks.push(WifiNetwork {
+                ssid,
+                strength: signal_percentage(signal),
+                security: security_from_iwd(&kind),
+                active: connected,
+            });
         }
-        networks.sort_by_key(|network| {
-            (
-                std::cmp::Reverse(network.active),
-                std::cmp::Reverse(network.strength),
-            )
-        });
         Ok(networks)
     }
 
     pub fn set_wifi_enabled(&self, enabled: bool) -> Result<(), NetworkError> {
-        nmcli(&["radio", "wifi", if enabled { "on" } else { "off" }]).map(|_| ())
+        let connection = self.connection()?;
+        let (device, _) = any_iwd_device(connection)?;
+        proxy(connection, &device, DEVICE_INTERFACE)?
+            .set_property("Powered", enabled)
+            .map_err(dbus_error("could not change iwd radio power"))
     }
 
     pub fn set_cellular_enabled(&self, enabled: bool) -> Result<(), NetworkError> {
-        nmcli(&["radio", "wwan", if enabled { "on" } else { "off" }]).map(|_| ())
+        let connection = self.connection()?;
+        let modem = modem_path(connection)
+            .ok_or_else(|| NetworkError("ModemManager did not expose a modem".into()))?;
+        let modem = proxy(connection, &modem, "org.freedesktop.ModemManager1.Modem")?;
+        modem
+            .call::<_, _, ()>("Enable", &(enabled))
+            .map_err(dbus_error("could not change modem power"))
     }
 
     pub fn connect_wifi(&self, ssid: &str, password: Option<&str>) -> Result<(), NetworkError> {
-        let mut arguments = vec!["device", "wifi", "connect", ssid];
+        let connection = self.connection()?;
+        let network_path = find_network(connection, ssid)?;
+        let network = proxy(connection, &network_path, NETWORK_INTERFACE)?;
         if let Some(password) = password {
-            arguments.extend(["password", password]);
+            self.register_agent();
+            if !self.agent_registered.load(Ordering::SeqCst) {
+                return Err(NetworkError(
+                    "iwd rejected Patin's credential agent; another agent may be active".into(),
+                ));
+            }
+            *self
+                .passphrase
+                .lock()
+                .map_err(|_| NetworkError("credential state is unavailable".into()))? =
+                Some(password.into());
         }
-        nmcli(&arguments).map(|_| ())
+        let result = network
+            .call::<_, _, ()>("Connect", &())
+            .map_err(dbus_error("iwd could not connect to the network"));
+        if let Ok(mut secret) = self.passphrase.lock() {
+            *secret = None;
+        }
+        result
     }
 
     pub fn disconnect_wifi(&self) -> Result<(), NetworkError> {
-        let device = nmcli(&[
-            "--terse",
-            "--fields",
-            "DEVICE,TYPE,STATE",
-            "device",
-            "status",
-        ])?
-        .lines()
-        .filter_map(|line| {
-            let fields = split_escaped(line);
-            (fields.len() == 3).then_some(fields)
-        })
-        .find(|fields| fields[1] == "wifi" && fields[2].starts_with("connected"))
-        .map(|fields| fields[0].clone())
-        .ok_or_else(|| NetworkError("no active network device".into()))?;
-        nmcli(&["device", "disconnect", &device]).map(|_| ())
+        let connection = self.connection()?;
+        let (_, station_path) = station_device(connection)?;
+        proxy(connection, &station_path, STATION_INTERFACE)?
+            .call::<_, _, ()>("Disconnect", &())
+            .map_err(dbus_error("iwd could not disconnect the station"))
     }
 
     pub fn forget_wifi(&self, ssid: &str) -> Result<(), NetworkError> {
-        let profiles = nmcli(&[
-            "--terse",
-            "--escape",
-            "yes",
-            "--fields",
-            "UUID,TYPE,802-11-wireless.SSID",
-            "connection",
-            "show",
-        ])?;
-        let uuid = profiles
-            .lines()
-            .filter_map(|line| {
-                let fields = split_escaped(line);
-                (fields.len() == 3).then_some(fields)
-            })
-            .find(|fields| fields[1] == "802-11-wireless" && fields[2] == ssid)
-            .map(|fields| fields[0].clone())
-            .ok_or_else(|| NetworkError(format!("no saved profile for {ssid}")))?;
-        nmcli(&["connection", "delete", "uuid", &uuid]).map(|_| ())
+        let connection = self.connection()?;
+        let objects = iwd_objects(connection)?;
+        for (path, interfaces) in objects {
+            if !interfaces.contains_key(KNOWN_NETWORK_INTERFACE) {
+                continue;
+            }
+            let known = proxy(connection, &path, KNOWN_NETWORK_INTERFACE)?;
+            let name: String = known.get_property("Name").unwrap_or_default();
+            if name == ssid {
+                return known
+                    .call::<_, _, ()>("Forget", &())
+                    .map_err(dbus_error("iwd could not forget the network"));
+            }
+        }
+        Err(NetworkError(format!(
+            "iwd has no saved network named {ssid}"
+        )))
     }
 
     pub fn hotspot_config(&self) -> HotspotConfig {
-        let ssid = nmcli(&[
-            "--get-values",
-            "802-11-wireless.ssid",
-            "connection",
-            "show",
-            HOTSPOT_PROFILE,
-        ])
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Patin".into());
-        let password_configured = nmcli(&[
-            "--show-secrets",
-            "--get-values",
-            "802-11-wireless-security.psk",
-            "connection",
-            "show",
-            HOTSPOT_PROFILE,
-        ])
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-        let key_mgmt = nmcli(&[
-            "--get-values",
-            "802-11-wireless-security.key-mgmt",
-            "connection",
-            "show",
-            HOTSPOT_PROFILE,
-        ])
-        .unwrap_or_default();
-        let band = nmcli(&[
-            "--get-values",
-            "802-11-wireless.band",
-            "connection",
-            "show",
-            HOTSPOT_PROFILE,
-        ])
-        .unwrap_or_default();
-        HotspotConfig {
-            ssid,
-            password_configured,
-            security: if key_mgmt.trim().is_empty() {
-                HotspotSecurity::Open
-            } else {
-                HotspotSecurity::WpaPersonal
+        read_hotspot().map_or_else(
+            || HotspotConfig {
+                ssid: "Patin".into(),
+                password_configured: false,
+                security: HotspotSecurity::WpaPersonal,
+                band: HotspotBand::Automatic,
             },
-            band: match band.trim() {
-                "bg" => HotspotBand::Ghz2_4,
-                "a" => HotspotBand::Ghz5,
-                _ => HotspotBand::Automatic,
+            |stored| HotspotConfig {
+                ssid: stored.ssid,
+                password_configured: true,
+                security: HotspotSecurity::WpaPersonal,
+                band: HotspotBand::Automatic,
             },
-        }
+        )
     }
 
     pub fn save_hotspot(
@@ -255,83 +247,100 @@ impl NetworkProvider {
         config: &HotspotConfig,
         password: Option<&str>,
     ) -> Result<(), NetworkError> {
-        validate_hotspot(&config.ssid, config.security, password)?;
-        if config.security == HotspotSecurity::WpaPersonal
-            && password.is_none()
-            && !config.password_configured
-        {
-            return Err(NetworkError("set a hotspot password before saving".into()));
-        }
-        if nmcli(&["connection", "show", HOTSPOT_PROFILE]).is_err() {
-            nmcli(&[
-                "connection",
-                "add",
-                "type",
-                "wifi",
-                "ifname",
-                "*",
-                "con-name",
-                HOTSPOT_PROFILE,
-                "autoconnect",
-                "no",
-                "ssid",
-                &config.ssid,
-            ])?;
-        }
-        let band = match config.band {
-            HotspotBand::Automatic => "",
-            HotspotBand::Ghz2_4 => "bg",
-            HotspotBand::Ghz5 => "a",
-        };
-        nmcli(&[
-            "connection",
-            "modify",
-            HOTSPOT_PROFILE,
-            "802-11-wireless.mode",
-            "ap",
-            "802-11-wireless.ssid",
-            &config.ssid,
-            "802-11-wireless.band",
-            band,
-            "ipv4.method",
-            "shared",
-            "ipv6.method",
-            "disabled",
-        ])?;
-        match config.security {
-            HotspotSecurity::Open => {
-                nmcli(&[
-                    "connection",
-                    "modify",
-                    HOTSPOT_PROFILE,
-                    "remove",
-                    "802-11-wireless-security",
-                ])?;
-            }
-            HotspotSecurity::WpaPersonal => {
-                if let Some(password) = password {
-                    nmcli(&[
-                        "connection",
-                        "modify",
-                        HOTSPOT_PROFILE,
-                        "802-11-wireless-security.key-mgmt",
-                        "wpa-psk",
-                        "802-11-wireless-security.psk",
-                        password,
-                    ])?;
-                }
-            }
-        }
-        Ok(())
+        validate_hotspot(config, password)?;
+        let existing = read_hotspot();
+        let password = password
+            .map(str::to_owned)
+            .or_else(|| existing.map(|stored| stored.password))
+            .ok_or_else(|| NetworkError("set a hotspot password before saving".into()))?;
+        write_hotspot(&StoredHotspot {
+            ssid: config.ssid.clone(),
+            password,
+        })
     }
 
     pub fn set_hotspot_enabled(&self, enabled: bool) -> Result<(), NetworkError> {
+        let connection = self.connection()?;
+        let (device_path, _) = any_iwd_device(connection)?;
+        let device = proxy(connection, &device_path, DEVICE_INTERFACE)?;
         if enabled {
-            nmcli(&["connection", "up", HOTSPOT_PROFILE])?;
+            if !iwd_network_configuration_enabled(connection) {
+                return Err(NetworkError(
+                    "enable iwd network configuration before starting a hotspot".into(),
+                ));
+            }
+            let stored = read_hotspot()
+                .ok_or_else(|| NetworkError("save hotspot settings before enabling it".into()))?;
+            device
+                .set_property("Mode", "ap")
+                .map_err(dbus_error("iwd could not switch the device to AP mode"))?;
+            let mut last_error = None;
+            for _ in 0..10 {
+                let access_point = proxy(connection, &device_path, ACCESS_POINT_INTERFACE)?;
+                match access_point
+                    .call::<_, _, ()>("Start", &(stored.ssid.clone(), stored.password.clone()))
+                {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(NetworkError(format!(
+                "iwd could not start the hotspot: {}",
+                last_error.expect("the AP start loop runs at least once")
+            )))
         } else {
-            nmcli(&["connection", "down", HOTSPOT_PROFILE])?;
+            if let Ok(access_point) = proxy(connection, &device_path, ACCESS_POINT_INTERFACE) {
+                access_point
+                    .call::<_, _, ()>("Stop", &())
+                    .map_err(dbus_error("iwd could not stop the hotspot"))?;
+            }
+            device
+                .set_property("Mode", "station")
+                .map_err(dbus_error("iwd could not return to station mode"))
         }
-        Ok(())
+    }
+
+    fn connection(&self) -> Result<&zbus::blocking::Connection, NetworkError> {
+        self.connection
+            .as_ref()
+            .ok_or_else(|| NetworkError("the system D-Bus is unavailable".into()))
+    }
+
+    fn register_agent(&self) {
+        if self.agent_registered.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        if connection
+            .object_server()
+            .at(
+                AGENT_PATH,
+                CredentialAgent {
+                    passphrase: self.passphrase.clone(),
+                },
+            )
+            .is_err()
+        {
+            return;
+        }
+        let Ok(manager) = zbus::blocking::Proxy::new(
+            connection,
+            IWD_SERVICE,
+            IWD_ROOT,
+            "net.connman.iwd.AgentManager",
+        ) else {
+            return;
+        };
+        let Ok(path) = OwnedObjectPath::try_from(AGENT_PATH) else {
+            return;
+        };
+        self.agent_registered.store(
+            manager.call::<_, _, ()>("RegisterAgent", &(path)).is_ok(),
+            Ordering::SeqCst,
+        );
     }
 }
 
@@ -341,113 +350,182 @@ impl Default for NetworkProvider {
     }
 }
 
+impl Drop for NetworkProvider {
+    fn drop(&mut self) {
+        if !self.agent_registered.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        let Ok(manager) = zbus::blocking::Proxy::new(
+            connection,
+            IWD_SERVICE,
+            IWD_ROOT,
+            "net.connman.iwd.AgentManager",
+        ) else {
+            return;
+        };
+        if let Ok(path) = OwnedObjectPath::try_from(AGENT_PATH) {
+            let _ = manager.call::<_, _, ()>("UnregisterAgent", &(path));
+        }
+    }
+}
+
 impl Provider for NetworkProvider {
     type Snapshot = Option<NetworkSnapshot>;
 
     fn poll(&mut self) -> Self::Snapshot {
         let connection = self.connection.as_ref()?;
-        let mut snapshot = network_manager_snapshot(connection).unwrap_or_default();
-        if let Some(percentage) = cellular_strength(connection) {
-            snapshot.cellular = Some(percentage);
-            snapshot.cellular_available = true;
-        }
+        let mut snapshot = iwd_snapshot(connection).unwrap_or_default();
+        let (available, enabled, strength) = modem_snapshot(connection);
+        snapshot.cellular_available = available;
+        snapshot.cellular_enabled = enabled;
+        snapshot.cellular = strength;
+        snapshot.wired = wired_connected();
         Some(snapshot)
     }
 }
 
-fn network_manager_snapshot(connection: &zbus::blocking::Connection) -> Option<NetworkSnapshot> {
-    let network_manager = zbus::blocking::Proxy::new(
-        connection,
-        "org.freedesktop.NetworkManager",
-        "/org/freedesktop/NetworkManager",
-        "org.freedesktop.NetworkManager",
-    )
-    .ok()?;
-    let active_connections: Vec<OwnedObjectPath> =
-        network_manager.get_property("ActiveConnections").ok()?;
-    let mut snapshot = NetworkSnapshot {
-        wifi_enabled: network_manager
-            .get_property("WirelessEnabled")
-            .unwrap_or(false),
-        cellular_enabled: network_manager.get_property("WwanEnabled").unwrap_or(false),
-        ..Default::default()
-    };
-    let devices: Vec<OwnedObjectPath> = network_manager.call("GetDevices", &()).unwrap_or_default();
-    for path in devices {
-        if let Ok(device) = zbus::blocking::Proxy::new(
-            connection,
-            "org.freedesktop.NetworkManager",
-            path.as_str(),
-            "org.freedesktop.NetworkManager.Device",
-        ) {
-            let device_type: u32 = device.get_property("DeviceType").unwrap_or(0);
-            snapshot.wifi_available |= device_type == 2;
-            snapshot.cellular_available |= device_type == 8;
+type Interfaces =
+    HashMap<zbus::names::OwnedInterfaceName, HashMap<String, zbus::zvariant::OwnedValue>>;
+type Objects = HashMap<OwnedObjectPath, Interfaces>;
+
+fn iwd_objects(connection: &zbus::blocking::Connection) -> Result<Objects, NetworkError> {
+    let manager = zbus::blocking::fdo::ObjectManagerProxy::builder(connection)
+        .destination(IWD_SERVICE)
+        .map_err(dbus_error("invalid iwd destination"))?
+        .path("/")
+        .map_err(dbus_error("invalid iwd object-manager path"))?
+        .build()
+        .map_err(dbus_error("could not create iwd object manager"))?;
+    manager
+        .get_managed_objects()
+        .map_err(dbus_error("could not enumerate iwd objects"))
+}
+
+fn proxy<'a>(
+    connection: &'a zbus::blocking::Connection,
+    path: &'a OwnedObjectPath,
+    interface: &'a str,
+) -> Result<zbus::blocking::Proxy<'a>, NetworkError> {
+    zbus::blocking::Proxy::new(connection, IWD_SERVICE, path.as_str(), interface)
+        .map_err(dbus_error("could not create iwd proxy"))
+}
+
+fn any_iwd_device(
+    connection: &zbus::blocking::Connection,
+) -> Result<(OwnedObjectPath, Option<OwnedObjectPath>), NetworkError> {
+    let objects = iwd_objects(connection)?;
+    let mut fallback = None;
+    for (path, interfaces) in objects {
+        if interfaces.contains_key(DEVICE_INTERFACE) {
+            let station = interfaces
+                .contains_key(STATION_INTERFACE)
+                .then(|| path.clone());
+            if station.is_some() {
+                return Ok((path, station));
+            }
+            fallback.get_or_insert(path);
         }
     }
-    for path in active_connections {
-        let active = zbus::blocking::Proxy::new(
-            connection,
-            "org.freedesktop.NetworkManager",
-            path.as_str(),
-            "org.freedesktop.NetworkManager.Connection.Active",
-        )
-        .ok()?;
-        let connection_type: String = active.get_property("Type").ok()?;
-        match connection_type.as_str() {
-            "802-11-wireless" => {
-                let strength = wifi_strength(connection, &path).unwrap_or(0);
-                let id: String = active.get_property("Id").unwrap_or_default();
-                if id == HOTSPOT_PROFILE {
-                    snapshot.hotspot_active = true;
-                } else {
-                    snapshot.wifi = Some(strength);
+    if let Some(path) = fallback {
+        return Ok((path, None));
+    }
+    Err(NetworkError("iwd did not expose a Wi-Fi device".into()))
+}
+
+fn station_device(
+    connection: &zbus::blocking::Connection,
+) -> Result<(OwnedObjectPath, OwnedObjectPath), NetworkError> {
+    let (device, station) = any_iwd_device(connection)?;
+    station
+        .map(|station| (device, station))
+        .ok_or_else(|| NetworkError("the iwd device is not in station mode".into()))
+}
+
+fn find_network(
+    connection: &zbus::blocking::Connection,
+    ssid: &str,
+) -> Result<OwnedObjectPath, NetworkError> {
+    let (_, station_path) = station_device(connection)?;
+    let station = proxy(connection, &station_path, STATION_INTERFACE)?;
+    let ordered: Vec<(OwnedObjectPath, i16)> = station
+        .call("GetOrderedNetworks", &())
+        .map_err(dbus_error("could not read iwd scan results"))?;
+    for (path, _) in ordered {
+        let network = proxy(connection, &path, NETWORK_INTERFACE)?;
+        let name: String = network.get_property("Name").unwrap_or_default();
+        if name == ssid {
+            return Ok(path.clone());
+        }
+    }
+    Err(NetworkError(format!("iwd cannot currently see {ssid}")))
+}
+
+fn iwd_snapshot(connection: &zbus::blocking::Connection) -> Option<NetworkSnapshot> {
+    let objects = iwd_objects(connection).ok()?;
+    let mut snapshot = NetworkSnapshot::default();
+    for (path, interfaces) in objects {
+        if !interfaces.contains_key(DEVICE_INTERFACE) {
+            continue;
+        }
+        snapshot.wifi_available = true;
+        let device = proxy(connection, &path, DEVICE_INTERFACE).ok()?;
+        snapshot.wifi_enabled |= device.get_property("Powered").unwrap_or(false);
+        let mode: String = device.get_property("Mode").unwrap_or_default();
+        if mode == "ap" && interfaces.contains_key(ACCESS_POINT_INTERFACE) {
+            snapshot.hotspot_active = proxy(connection, &path, ACCESS_POINT_INTERFACE)
+                .ok()
+                .and_then(|ap| ap.get_property("Started").ok())
+                .unwrap_or(false);
+        } else if interfaces.contains_key(STATION_INTERFACE) {
+            let station = proxy(connection, &path, STATION_INTERFACE).ok()?;
+            let ordered: Vec<(OwnedObjectPath, i16)> =
+                station.call("GetOrderedNetworks", &()).unwrap_or_default();
+            for (network_path, signal) in ordered {
+                let network = proxy(connection, &network_path, NETWORK_INTERFACE).ok()?;
+                if network.get_property("Connected").unwrap_or(false) {
+                    snapshot.wifi = Some(signal_percentage(signal));
+                    break;
                 }
             }
-            "802-3-ethernet" => snapshot.wired = true,
-            _ => {}
         }
     }
     Some(snapshot)
 }
 
-fn wifi_strength(
-    connection: &zbus::blocking::Connection,
-    active_connection: &OwnedObjectPath,
-) -> Option<u8> {
-    let active = zbus::blocking::Proxy::new(
-        connection,
-        "org.freedesktop.NetworkManager",
-        active_connection.as_str(),
-        "org.freedesktop.NetworkManager.Connection.Active",
-    )
-    .ok()?;
-    let devices: Vec<OwnedObjectPath> = active.get_property("Devices").ok()?;
-    let device_path = devices.first()?;
-    let device = zbus::blocking::Proxy::new(
-        connection,
-        "org.freedesktop.NetworkManager",
-        device_path.as_str(),
-        "org.freedesktop.NetworkManager.Device.Wireless",
-    )
-    .ok()?;
-    let access_point: OwnedObjectPath = device.get_property("ActiveAccessPoint").ok()?;
-    if access_point.as_str() == "/" {
-        return None;
-    }
-    let access_point = zbus::blocking::Proxy::new(
-        connection,
-        "org.freedesktop.NetworkManager",
-        access_point.as_str(),
-        "org.freedesktop.NetworkManager.AccessPoint",
-    )
-    .ok()?;
-    access_point.get_property("Strength").ok()
+fn iwd_network_configuration_enabled(connection: &zbus::blocking::Connection) -> bool {
+    let Ok(daemon) =
+        zbus::blocking::Proxy::new(connection, IWD_SERVICE, IWD_ROOT, "net.connman.iwd.Daemon")
+    else {
+        return false;
+    };
+    let Ok(mut info) =
+        daemon.call::<_, _, HashMap<String, zbus::zvariant::OwnedValue>>("GetInfo", &())
+    else {
+        return false;
+    };
+    info.remove("NetworkConfigurationEnabled")
+        .and_then(|value| bool::try_from(value).ok())
+        .unwrap_or(false)
 }
 
-fn cellular_strength(connection: &zbus::blocking::Connection) -> Option<u8> {
+fn security_from_iwd(kind: &str) -> WifiSecurity {
+    match kind {
+        "open" => WifiSecurity::Open,
+        "psk" => WifiSecurity::Personal,
+        _ => WifiSecurity::Unsupported,
+    }
+}
+
+fn signal_percentage(signal: i16) -> u8 {
+    let dbm = f32::from(signal) / 100.0;
+    (((dbm + 100.0) / 70.0) * 100.0).round().clamp(0.0, 100.0) as u8
+}
+
+fn modem_path(connection: &zbus::blocking::Connection) -> Option<OwnedObjectPath> {
     const MODEM_INTERFACE: &str = "org.freedesktop.ModemManager1.Modem";
-    const REGISTERED: i32 = 8;
     let manager = zbus::blocking::fdo::ObjectManagerProxy::builder(connection)
         .destination("org.freedesktop.ModemManager1")
         .ok()?
@@ -455,77 +533,131 @@ fn cellular_strength(connection: &zbus::blocking::Connection) -> Option<u8> {
         .ok()?
         .build()
         .ok()?;
-    let objects = manager.get_managed_objects().ok()?;
-    objects.into_iter().find_map(|(path, interfaces)| {
-        interfaces
-            .keys()
-            .any(|interface| interface.as_str() == MODEM_INTERFACE)
-            .then(|| {
-                let modem = zbus::blocking::Proxy::new(
-                    connection,
-                    "org.freedesktop.ModemManager1",
-                    path.as_str(),
-                    MODEM_INTERFACE,
-                )
-                .ok()?;
-                let state: i32 = modem.get_property("State").ok()?;
-                if state < REGISTERED {
-                    return None;
-                }
-                let (percentage, _recent): (u32, bool) =
-                    modem.get_property("SignalQuality").ok()?;
-                Some(percentage.min(100) as u8)
-            })
-            .flatten()
+    manager
+        .get_managed_objects()
+        .ok()?
+        .into_iter()
+        .find_map(|(path, interfaces)| interfaces.contains_key(MODEM_INTERFACE).then_some(path))
+}
+
+fn modem_snapshot(connection: &zbus::blocking::Connection) -> (bool, bool, Option<u8>) {
+    const MODEM_INTERFACE: &str = "org.freedesktop.ModemManager1.Modem";
+    const ENABLED: i32 = 6;
+    const REGISTERED: i32 = 8;
+    let Some(path) = modem_path(connection) else {
+        return (false, false, None);
+    };
+    let Ok(modem) = zbus::blocking::Proxy::new(
+        connection,
+        "org.freedesktop.ModemManager1",
+        path.as_str(),
+        MODEM_INTERFACE,
+    ) else {
+        return (true, false, None);
+    };
+    let state: i32 = modem.get_property("State").unwrap_or(0);
+    let signal = (state >= REGISTERED)
+        .then(|| modem.get_property::<(u32, bool)>("SignalQuality").ok())
+        .flatten()
+        .map(|(percentage, _)| percentage.min(100) as u8);
+    (true, state >= ENABLED, signal)
+}
+
+fn wired_connected() -> bool {
+    let Ok(entries) = fs::read_dir("/sys/class/net") else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        !path.join("wireless").exists()
+            && entry.file_name() != "lo"
+            && fs::read_to_string(path.join("carrier")).is_ok_and(|carrier| carrier.trim() == "1")
     })
 }
 
-fn nmcli(arguments: &[&str]) -> Result<String, NetworkError> {
-    let output = Command::new("nmcli")
-        .args(arguments)
-        .output()
-        .map_err(|error| NetworkError(format!("could not run nmcli: {error}")))?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
-    }
-    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(NetworkError(if detail.is_empty() {
-        "NetworkManager operation failed".into()
-    } else {
-        detail
-    }))
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredHotspot {
+    ssid: String,
+    password: String,
 }
 
-fn split_escaped(line: &str) -> Vec<String> {
-    let mut fields = vec![String::new()];
-    let mut escaped = false;
-    for character in line.chars() {
-        if escaped {
-            fields.last_mut().unwrap().push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == ':' {
-            fields.push(String::new());
-        } else {
-            fields.last_mut().unwrap().push(character);
-        }
-    }
-    fields
+fn hotspot_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .map(|root| root.join("patin/hotspot.conf"))
 }
 
-fn validate_hotspot(
-    ssid: &str,
-    security: HotspotSecurity,
-    password: Option<&str>,
-) -> Result<(), NetworkError> {
-    if ssid.is_empty() || ssid.len() > 32 {
+fn read_hotspot() -> Option<StoredHotspot> {
+    let contents = fs::read_to_string(hotspot_path()?).ok()?;
+    let mut lines = contents.lines();
+    Some(StoredHotspot {
+        ssid: decode_hex(lines.next()?)?,
+        password: decode_hex(lines.next()?)?,
+    })
+}
+
+fn write_hotspot(hotspot: &StoredHotspot) -> Result<(), NetworkError> {
+    let path = hotspot_path()
+        .ok_or_else(|| NetworkError("no user configuration directory is available".into()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| NetworkError("invalid hotspot configuration path".into()))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        NetworkError(format!("could not create Patin config directory: {error}"))
+    })?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| NetworkError(format!("could not save hotspot settings: {error}")))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|error| NetworkError(format!("could not protect hotspot settings: {error}")))?;
+    writeln!(
+        file,
+        "{}\n{}",
+        encode_hex(&hotspot.ssid),
+        encode_hex(&hotspot.password)
+    )
+    .map_err(|error| NetworkError(format!("could not save hotspot settings: {error}")))
+}
+
+fn encode_hex(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn decode_hex(value: &str) -> Option<String> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn validate_hotspot(config: &HotspotConfig, password: Option<&str>) -> Result<(), NetworkError> {
+    if config.ssid.is_empty() || config.ssid.len() > 32 {
         return Err(NetworkError(
             "hotspot SSID must contain 1 to 32 bytes".into(),
         ));
     }
-    if security == HotspotSecurity::WpaPersonal && password.is_none() {
-        return Ok(());
+    if config.security != HotspotSecurity::WpaPersonal {
+        return Err(NetworkError(
+            "iwd AP mode requires WPA-personal security".into(),
+        ));
+    }
+    if config.band != HotspotBand::Automatic {
+        return Err(NetworkError(
+            "iwd's dynamic AP API chooses the band automatically".into(),
+        ));
     }
     if let Some(password) = password
         && (!(8..=63).contains(&password.len()) || !password.is_ascii())
@@ -537,9 +669,13 @@ fn validate_hotspot(
     Ok(())
 }
 
+fn dbus_error<E: fmt::Display>(prefix: &'static str) -> impl FnOnce(E) -> NetworkError {
+    move |error| NetworkError(format!("{prefix}: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{NetworkProvider, NetworkSnapshot, Provider, split_escaped, validate_hotspot};
+    use super::*;
 
     #[test]
     fn disconnected_snapshot_has_no_active_transport() {
@@ -560,31 +696,36 @@ mod tests {
 
     #[test]
     fn poll_without_a_system_bus_returns_none() {
-        let mut provider = NetworkProvider { connection: None };
+        let mut provider = NetworkProvider {
+            connection: None,
+            passphrase: Arc::new(Mutex::new(None)),
+            agent_registered: AtomicBool::new(false),
+        };
         assert_eq!(provider.poll(), None);
     }
 
     #[test]
-    fn parses_escaped_nmcli_fields() {
-        assert_eq!(
-            split_escaped("*:Cafe\\: upstairs:77:WPA2"),
-            ["*", "Cafe: upstairs", "77", "WPA2"]
-        );
+    fn maps_iwd_signal_strength_to_a_bounded_percentage() {
+        assert_eq!(signal_percentage(0), 100);
+        assert_eq!(signal_percentage(-10_000), 0);
+        assert!(signal_percentage(-6_500) > signal_percentage(-8_000));
     }
 
     #[test]
-    fn validates_hotspot_credentials_before_network_manager() {
-        assert!(
-            validate_hotspot(
-                "Patin",
-                super::HotspotSecurity::WpaPersonal,
-                Some("eight888")
-            )
-            .is_ok()
-        );
-        assert!(validate_hotspot("", super::HotspotSecurity::Open, None).is_err());
-        assert!(
-            validate_hotspot("Patin", super::HotspotSecurity::WpaPersonal, Some("short")).is_err()
-        );
+    fn hotspot_storage_encoding_round_trips_delimiters() {
+        let value = "Phone: café\nline";
+        assert_eq!(decode_hex(&encode_hex(value)).as_deref(), Some(value));
+    }
+
+    #[test]
+    fn validates_iwd_hotspot_constraints() {
+        let config = HotspotConfig {
+            ssid: "Patin".into(),
+            password_configured: false,
+            security: HotspotSecurity::WpaPersonal,
+            band: HotspotBand::Automatic,
+        };
+        assert!(validate_hotspot(&config, Some("eight888")).is_ok());
+        assert!(validate_hotspot(&config, Some("short")).is_err());
     }
 }
