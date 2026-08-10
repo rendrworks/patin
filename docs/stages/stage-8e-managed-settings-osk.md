@@ -59,7 +59,7 @@ Local verification on 2026-08-10:
 ```text
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
-  44 passed; 0 failed
+  45 passed; 0 failed
 cargo clippy --workspace --all-targets --all-features -- -D warnings
   finished successfully
 mdbook build

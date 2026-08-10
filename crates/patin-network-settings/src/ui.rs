@@ -324,12 +324,30 @@ impl NetworkSettings {
             let result = self
                 .provider
                 .connect_wifi(&network.ssid, Some(&self.wifi_password));
+            if result.is_ok() {
+                self.mark_connected(index);
+            }
             self.wifi_password.clear();
             self.editing = None;
             self.result(result);
             return;
         }
         self.editing = None;
+    }
+
+    fn mark_connected(&mut self, index: usize) {
+        let strength = self.networks.get(index).map(|network| network.strength);
+        for (candidate_index, network) in self.networks.iter_mut().enumerate() {
+            network.active = candidate_index == index;
+        }
+        self.snapshot.wifi = strength;
+    }
+
+    fn mark_disconnected(&mut self) {
+        for network in &mut self.networks {
+            network.active = false;
+        }
+        self.snapshot.wifi = None;
     }
 
     fn act(&mut self, action: Action) {
@@ -372,11 +390,17 @@ impl NetworkSettings {
             }
             Action::Disconnect => {
                 let result = self.provider.disconnect_wifi();
+                if result.is_ok() {
+                    self.mark_disconnected();
+                }
                 self.result(result);
             }
             Action::Forget(index) => {
                 if let Some(network) = self.networks.get(index) {
                     let result = self.provider.forget_wifi(&network.ssid);
+                    if result.is_ok() {
+                        self.networks.remove(index);
+                    }
                     self.result(result);
                 }
             }
@@ -385,10 +409,17 @@ impl NetworkSettings {
                     match network.security {
                         WifiSecurity::Open => {
                             let result = self.provider.connect_wifi(&network.ssid, None);
+                            if result.is_ok() {
+                                self.mark_connected(index);
+                            }
                             self.result(result);
                         }
                         WifiSecurity::Personal => {
-                            if self.provider.connect_wifi(&network.ssid, None).is_err() {
+                            let result = self.provider.connect_wifi(&network.ssid, None);
+                            if result.is_ok() {
+                                self.mark_connected(index);
+                                self.result(result);
+                            } else {
                                 self.wifi_password.clear();
                                 self.editing = Some(Editing::WifiPassword(index));
                                 self.redraw();
@@ -684,6 +715,34 @@ mod tests {
         assert_eq!(wifi.bounds.origin.y, disconnect.bounds.origin.y);
         assert!(disconnect.bounds.origin.x > wifi.bounds.origin.x);
         assert_eq!(disconnect.label, "Disconnect");
+    }
+
+    #[test]
+    fn successful_connection_actions_update_visible_active_state_immediately() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        ui.networks = vec![
+            WifiNetwork {
+                ssid: "DELTA".into(),
+                strength: 69,
+                security: WifiSecurity::Personal,
+                active: true,
+            },
+            WifiNetwork {
+                ssid: "Corner".into(),
+                strength: 42,
+                security: WifiSecurity::Personal,
+                active: false,
+            },
+        ];
+
+        ui.mark_disconnected();
+        assert_eq!(ui.snapshot.wifi, None);
+        assert!(ui.networks.iter().all(|network| !network.active));
+
+        ui.mark_connected(1);
+        assert_eq!(ui.snapshot.wifi, Some(42));
+        assert!(!ui.networks[0].active);
+        assert!(ui.networks[1].active);
     }
 
     #[test]

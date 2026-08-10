@@ -164,6 +164,12 @@ impl NetworkProvider {
     }
 
     pub fn connect_wifi(&self, ssid: &str, password: Option<&str>) -> Result<(), NetworkError> {
+        if password.is_none()
+            && let Ok(profiles) = wifi_profiles()
+            && let Some(uuid) = wifi_profile_uuid(&profiles, ssid)
+        {
+            return nmcli(&["connection", "up", "uuid", uuid]).map(|_| ());
+        }
         let mut arguments = vec!["device", "wifi", "connect", ssid];
         if let Some(password) = password {
             arguments.extend(["password", password]);

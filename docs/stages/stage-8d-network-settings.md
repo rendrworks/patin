@@ -57,6 +57,13 @@ access points with the same SSID are collapsed without losing active state: an
 active BSSID always wins over a stronger inactive BSSID, so the connected label
 does not depend on scan ordering or signal strength.
 
+Selecting a saved network activates its NetworkManager profile by UUID instead
+of treating its displayed SSID as a new network. This reuses stored secrets and
+avoids both unnecessary password prompts and SSID-text lookup ambiguity. After
+a successful connect, disconnect, or forget operation, the UI updates its
+active markers or rows immediately; periodic polling still confirms the
+authoritative NetworkManager state.
+
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
 hotspots, and a PolicyKit agent are later work.
 
