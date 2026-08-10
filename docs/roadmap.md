@@ -22,7 +22,8 @@ instantiated by the library:
 8. **Composition templates** — exercise phone navigation, launchers, quick
    settings, notifications, and keyboard control without making them defaults.
    Network settings now cover Wi-Fi, mobile-data, and hotspot essentials;
-   their editable fields use the compositor-selected session OSK. Launcher
+   saved Wi-Fi availability uses shared icons and a cache-only refresh, and
+   editable fields use the compositor-selected session OSK. Launcher
    search, advanced IP/DNS, APN, roaming, and enterprise enrollment remain
    later work.
 9. **Compositor integration** — add a replaceable adapter for 0xin workspace

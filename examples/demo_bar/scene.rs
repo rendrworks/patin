@@ -3,6 +3,7 @@ use patin::{
     platform::Shell,
     ui::{Color, DrawCommand, FontFamily, FontWeight, Length, Rect, Size, TextAlign, row},
 };
+use patin_icons::{IconPalette, WifiSignal, wifi_signal};
 use patin_service_network::NetworkSnapshot;
 use patin_service_upower::BatterySnapshot;
 use patin_service_volume::VolumeSnapshot;
@@ -274,11 +275,12 @@ impl Shell for DemoBar {
         if let (Some(bounds), Some(status)) = (self.volume_bounds, self.volume) {
             commands.extend(volume_icon(bounds, status, self.style));
         }
-        if let (Some(bounds), Some(percentage)) = (
-            self.wifi_bounds,
-            self.network.map(|network| network.wifi.unwrap_or(0)),
-        ) {
-            commands.extend(wifi_icon(bounds, percentage, self.style));
+        if let (Some(bounds), Some(network)) = (self.wifi_bounds, self.network) {
+            let signal = network
+                .wifi
+                .map(WifiSignal::from_percentage)
+                .unwrap_or(WifiSignal::Unavailable);
+            commands.extend(wifi_signal(bounds, signal, wifi_palette(self.style)));
         }
         if let (Some(bounds), Some(network)) = (self.wired_bounds, self.network)
             && network.wired
@@ -400,38 +402,13 @@ fn volume_icon(bounds: Rect, status: VolumeSnapshot, style: BarStyle) -> Vec<Dra
     commands
 }
 
-fn wifi_icon(bounds: Rect, percentage: u8, style: BarStyle) -> Vec<DrawCommand> {
-    let icon = centered_icon(bounds, 24.0, 24.0);
-    let inactive = Color(78, 70, 91, 255);
-    let mut commands = Vec::new();
-    wifi_arc(
-        &mut commands,
-        icon,
-        3.0,
-        if percentage >= 67 {
-            style.text
-        } else {
-            inactive
-        },
-        style.background,
-    );
-    wifi_arc(
-        &mut commands,
-        icon.inset(4.0),
-        3.0,
-        if percentage >= 34 {
-            style.text
-        } else {
-            inactive
-        },
-        style.background,
-    );
-    commands.push(rounded(
-        Rect::new(icon.origin.x + 10.0, icon.origin.y + 15.0, 4.0, 4.0),
-        style.text,
-        2.0,
-    ));
-    commands
+fn wifi_palette(style: BarStyle) -> IconPalette {
+    IconPalette {
+        foreground: style.text,
+        muted: Color(78, 70, 91, 255),
+        background: style.background,
+        unavailable: Color(239, 96, 119, 255),
+    }
 }
 
 fn cellular_icon(bounds: Rect, percentage: u8, style: BarStyle) -> Vec<DrawCommand> {
@@ -488,30 +465,6 @@ fn wired_icon(bounds: Rect, style: BarStyle) -> Vec<DrawCommand> {
     ]
 }
 
-fn wifi_arc(
-    commands: &mut Vec<DrawCommand>,
-    bounds: Rect,
-    thickness: f32,
-    color: Color,
-    background: Color,
-) {
-    commands.push(rounded(bounds, color, bounds.size.width / 2.0));
-    commands.push(rounded(
-        bounds.inset(thickness),
-        background,
-        (bounds.size.width / 2.0 - thickness).max(0.0),
-    ));
-    commands.push(fill(
-        Rect::new(
-            bounds.origin.x,
-            bounds.origin.y + bounds.size.height / 2.0,
-            bounds.size.width,
-            bounds.size.height / 2.0,
-        ),
-        background,
-    ));
-}
-
 fn centered_icon(bounds: Rect, width: f32, height: f32) -> Rect {
     Rect::new(
         bounds.origin.x + (bounds.size.width - width) / 2.0,
@@ -545,12 +498,13 @@ fn format_clock(hour: u32, minute: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BarStyle, DemoBar, battery_icon, cellular_icon, format_clock, volume_icon, wifi_icon,
+        BarStyle, DemoBar, battery_icon, cellular_icon, format_clock, volume_icon, wifi_palette,
     };
     use patin::{
         platform::Shell,
         ui::{DrawCommand, Rect, Size},
     };
+    use patin_icons::{WifiSignal, wifi_signal};
     use patin_service_network::NetworkSnapshot;
     use patin_service_upower::BatterySnapshot;
     use patin_service_volume::VolumeSnapshot;
@@ -664,7 +618,7 @@ mod tests {
                 },
                 style,
             ),
-            wifi_icon(bounds, 75, style),
+            wifi_signal(bounds, WifiSignal::Good, wifi_palette(style)),
             cellular_icon(bounds, 55, style),
         ];
 
@@ -675,7 +629,10 @@ mod tests {
                 .all(|command| !matches!(command, DrawCommand::Text { .. }))
         );
         assert_ne!(low_battery, charged_battery);
-        assert_ne!(wifi_icon(bounds, 20, style), wifi_icon(bounds, 80, style));
+        assert_ne!(
+            wifi_signal(bounds, WifiSignal::Poor, wifi_palette(style)),
+            wifi_signal(bounds, WifiSignal::Good, wifi_palette(style))
+        );
         assert_ne!(
             cellular_icon(bounds, 20, style),
             cellular_icon(bounds, 80, style)

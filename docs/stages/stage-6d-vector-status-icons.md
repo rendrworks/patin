@@ -7,8 +7,9 @@ The first demo bar proved its service adapters by printing values such as
 they made a 32-logical-pixel shell bar feel like a test fixture rather than a
 compact status surface.
 
-This stage changes only the demo composition. Patin still does not ship a bar
-or prescribe icons, and the optional service adapters still return reusable
+This stage originally changed only the demo composition. Stage 8f later moved
+the Wi-Fi glyph into the optional `patin-icons` crate so multiple consumers can
+reuse it. Patin still does not ship a bar, and service adapters still return
 data rather than presentation.
 
 ## Structured state through the scene
@@ -44,9 +45,8 @@ only that status slot.
 
 - `examples/demo_bar/services.rs` preserves provider snapshots instead of
   converting them to labels.
-- `examples/demo_bar/scene.rs` renders `battery_icon`, `volume_icon`,
-  `wifi_icon`, `wired_icon`, and `cellular_icon`, with shared centering and shape
-  helpers plus state- and layout-regression tests.
+- `examples/demo_bar/scene.rs` renders the battery, volume, wired, and cellular
+  glyphs locally. Its original Wi-Fi helper moved to `patin-icons` in Stage 8f.
 - `README.md` and `docs/status-services.md` describe the visible behavior and
   retain the toolkit/example boundary.
 - `docs/SUMMARY.md` links this chapter.

@@ -3,6 +3,7 @@ use patin::{
     service::Provider,
     ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign},
 };
+use patin_icons::{IconPalette, WifiSignal, wifi_signal};
 use patin_service_network::{
     HotspotBand, HotspotConfig, HotspotSecurity, NetworkProvider, NetworkSnapshot, WifiNetwork,
     WifiSecurity,
@@ -10,6 +11,7 @@ use patin_service_network::{
 use zeroize::Zeroizing;
 
 const ROW: f32 = 52.0;
+const WIFI_REFRESH_TICKS: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -28,6 +30,7 @@ enum Action {
     ScanWifi,
     ToggleCellular,
     Connect(usize),
+    UnavailableWifi,
     Disconnect,
     Forget(usize),
     EditHotspotSsid,
@@ -44,6 +47,7 @@ struct Button {
     label: String,
     action: Action,
     text_align: TextAlign,
+    text_inset: f32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,9 +68,12 @@ pub struct NetworkSettings {
     wifi_password: Zeroizing<String>,
     editing: Option<Editing>,
     buttons: Vec<Button>,
+    wifi_icons: Vec<(Rect, WifiSignal)>,
     error: Option<String>,
     initial_refresh_pending: bool,
     scan_pending: bool,
+    show_discovered: bool,
+    wifi_refresh_ticks: u8,
     close: bool,
     damage: Vec<Rect>,
 }
@@ -89,9 +96,12 @@ impl NetworkSettings {
             wifi_password: Zeroizing::new(String::new()),
             editing: None,
             buttons: Vec::new(),
+            wifi_icons: Vec::new(),
             error: None,
             initial_refresh_pending: true,
             scan_pending: false,
+            show_discovered: false,
+            wifi_refresh_ticks: 0,
             close: false,
             damage: Vec::new(),
         };
@@ -101,6 +111,7 @@ impl NetworkSettings {
 
     fn layout(&mut self) {
         self.buttons.clear();
+        self.wifi_icons.clear();
         let width = self.size.width.clamp(1.0, 520.0);
         let left = (self.size.width - width) / 2.0;
         self.centered_button(Rect::new(left + 12.0, 14.0, 48.0, 40.0), "×", Action::Close);
@@ -173,18 +184,48 @@ impl NetworkSettings {
                     ((self.size.height - y + 6.0).max(0.0) / (ROW + 6.0)).floor() as usize;
                 let max_rows = row_capacity.min(if self.editing.is_some() { 2 } else { 5 });
                 for index in 0..self.networks.len().min(max_rows) {
-                    let network = &self.networks[index];
-                    let suffix = if network.active { " • connected" } else { "" };
-                    self.button(
-                        Rect::new(left + 16.0, y, width - 92.0, ROW),
-                        &format!("{}  {}%{suffix}", network.ssid, network.strength),
-                        Action::Connect(index),
+                    let network = self.networks[index].clone();
+                    let forget_width = 82.0;
+                    let row_width = width - 32.0;
+                    let main_width = if network.known {
+                        row_width - forget_width - 6.0
+                    } else {
+                        row_width
+                    };
+                    let main_bounds = Rect::new(left + 16.0, y, main_width, ROW);
+                    let signal = if network.available {
+                        WifiSignal::from_percentage(network.strength)
+                    } else {
+                        WifiSignal::Unavailable
+                    };
+                    let label = if !network.available {
+                        format!("{} • unavailable", network.ssid)
+                    } else if network.active {
+                        format!("{} • {}% • connected", network.ssid, network.strength)
+                    } else {
+                        format!("{} • {}%", network.ssid, network.strength)
+                    };
+                    self.wifi_icons.push((
+                        Rect::new(main_bounds.origin.x + 8.0, y + 14.0, 24.0, 24.0),
+                        signal,
+                    ));
+                    self.indented_button(
+                        main_bounds,
+                        &label,
+                        if network.available {
+                            Action::Connect(index)
+                        } else {
+                            Action::UnavailableWifi
+                        },
+                        42.0,
                     );
-                    self.button(
-                        Rect::new(left + width - 70.0, y, 54.0, ROW),
-                        "Forget",
-                        Action::Forget(index),
-                    );
+                    if network.known {
+                        self.centered_button(
+                            Rect::new(left + 16.0 + row_width - forget_width, y, forget_width, ROW),
+                            "Forget",
+                            Action::Forget(index),
+                        );
+                    }
                     y += ROW + 6.0;
                 }
             }
@@ -272,6 +313,16 @@ impl NetworkSettings {
             label: label.into(),
             action,
             text_align: TextAlign::Start,
+            text_inset: 10.0,
+        });
+    }
+    fn indented_button(&mut self, bounds: Rect, label: &str, action: Action, text_inset: f32) {
+        self.buttons.push(Button {
+            bounds,
+            label: label.into(),
+            action,
+            text_align: TextAlign::Start,
+            text_inset,
         });
     }
     fn centered_button(&mut self, bounds: Rect, label: &str, action: Action) {
@@ -280,6 +331,7 @@ impl NetworkSettings {
             label: label.into(),
             action,
             text_align: TextAlign::Center,
+            text_inset: 0.0,
         });
     }
     fn redraw(&mut self) {
@@ -340,6 +392,10 @@ impl NetworkSettings {
         for (candidate_index, network) in self.networks.iter_mut().enumerate() {
             network.active = candidate_index == index;
         }
+        if let Some(network) = self.networks.get_mut(index) {
+            network.available = true;
+            network.known = true;
+        }
         self.snapshot.wifi = strength;
     }
 
@@ -359,6 +415,7 @@ impl NetworkSettings {
             Action::WifiPage => {
                 self.page = Page::Wifi;
                 self.editing = None;
+                self.wifi_refresh_ticks = WIFI_REFRESH_TICKS;
                 self.redraw();
             }
             Action::CellularPage => {
@@ -434,6 +491,7 @@ impl NetworkSettings {
                     }
                 }
             }
+            Action::UnavailableWifi => {}
             Action::EditHotspotSsid => {
                 self.editing = Some(Editing::HotspotSsid);
                 self.redraw();
@@ -494,6 +552,7 @@ impl Shell for NetworkSettings {
                 Err(error) => self.error = Some(error.to_string()),
             }
             self.hotspot = self.provider.hotspot_config();
+            self.wifi_refresh_ticks = 0;
             self.redraw();
             return true;
         }
@@ -503,6 +562,8 @@ impl Shell for NetworkSettings {
                 Ok(networks) => {
                     self.networks = networks;
                     self.error = None;
+                    self.show_discovered = true;
+                    self.wifi_refresh_ticks = 0;
                 }
                 Err(error) => self.error = Some(error.to_string()),
             }
@@ -510,13 +571,35 @@ impl Shell for NetworkSettings {
             return true;
         }
         let next = self.provider.poll().unwrap_or_default();
+        let mut changed = false;
         if next != self.snapshot {
             self.snapshot = next;
-            self.redraw();
-            true
-        } else {
-            false
+            changed = true;
         }
+        if wifi_refresh_due(self.page, &mut self.wifi_refresh_ticks) {
+            match self
+                .provider
+                .refresh_wifi_networks(&self.networks, self.show_discovered)
+            {
+                Ok(networks) if networks != self.networks => {
+                    self.networks = networks;
+                    self.error = None;
+                    changed = true;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    let error = error.to_string();
+                    if self.error.as_deref() != Some(&error) {
+                        self.error = Some(error);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.redraw();
+        }
+        changed
     }
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
         if let Some(action) = self
@@ -565,11 +648,28 @@ impl Shell for NetworkSettings {
                 if button.text_align == TextAlign::Center {
                     button.bounds
                 } else {
-                    button.bounds.inset(10.0)
+                    Rect::new(
+                        button.bounds.origin.x + button.text_inset,
+                        button.bounds.origin.y + 10.0,
+                        (button.bounds.size.width - button.text_inset - 10.0).max(0.0),
+                        (button.bounds.size.height - 20.0).max(0.0),
+                    )
                 },
                 &button.label,
                 15.0,
                 button.text_align,
+            ));
+        }
+        for (bounds, signal) in &self.wifi_icons {
+            commands.extend(wifi_signal(
+                *bounds,
+                *signal,
+                IconPalette {
+                    foreground: Color(245, 243, 255, 255),
+                    muted: Color(112, 102, 132, 255),
+                    background: Color(57, 48, 75, 255),
+                    unavailable: Color(239, 96, 119, 255),
+                },
             ));
         }
         if let Some(error) = &self.error {
@@ -609,6 +709,18 @@ impl Shell for NetworkSettings {
 
 fn text(bounds: Rect, value: &str, size: f32) -> DrawCommand {
     aligned_text(bounds, value, size, TextAlign::Start)
+}
+
+fn wifi_refresh_due(page: Page, ticks: &mut u8) -> bool {
+    if page != Page::Wifi {
+        return false;
+    }
+    *ticks = ticks.saturating_add(1);
+    if *ticks < WIFI_REFRESH_TICKS {
+        return false;
+    }
+    *ticks = 0;
+    true
 }
 
 fn aligned_text(bounds: Rect, value: &str, size: f32, align: TextAlign) -> DrawCommand {
@@ -680,6 +792,8 @@ mod tests {
                 strength: 50,
                 security: WifiSecurity::Personal,
                 active: index == 0,
+                available: true,
+                known: true,
             })
             .collect();
         ui.resize(Size {
@@ -726,12 +840,16 @@ mod tests {
                 strength: 69,
                 security: WifiSecurity::Personal,
                 active: true,
+                available: true,
+                known: true,
             },
             WifiNetwork {
                 ssid: "Corner".into(),
                 strength: 42,
                 security: WifiSecurity::Personal,
                 active: false,
+                available: true,
+                known: true,
             },
         ];
 
@@ -743,6 +861,50 @@ mod tests {
         assert_eq!(ui.snapshot.wifi, Some(42));
         assert!(!ui.networks[0].active);
         assert!(ui.networks[1].active);
+    }
+
+    #[test]
+    fn known_network_rows_show_availability_icons_and_fit_forget() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        ui.initial_refresh_pending = false;
+        ui.networks = vec![WifiNetwork {
+            ssid: "Corner".into(),
+            strength: 0,
+            security: WifiSecurity::Unsupported,
+            active: false,
+            available: false,
+            known: true,
+        }];
+        ui.resize(Size {
+            width: 320.0,
+            height: 480.0,
+        });
+
+        assert_eq!(ui.wifi_icons[0].1, WifiSignal::Unavailable);
+        let network = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::UnavailableWifi))
+            .unwrap();
+        let forget = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::Forget(0)))
+            .unwrap();
+        assert!(network.label.contains("unavailable"));
+        assert!(forget.bounds.size.width >= 82.0);
+        assert!(
+            forget.bounds.origin.x + forget.bounds.size.width
+                <= ui.size.width - 16.0 + f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn wifi_cache_refresh_is_due_every_two_update_ticks() {
+        let mut ticks = 0;
+        assert!(!wifi_refresh_due(Page::Wifi, &mut ticks));
+        assert!(wifi_refresh_due(Page::Wifi, &mut ticks));
+        assert!(!wifi_refresh_due(Page::Cellular, &mut ticks));
     }
 
     #[test]

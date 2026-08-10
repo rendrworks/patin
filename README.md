@@ -34,9 +34,9 @@ The toolkit uses `smithay-client-toolkit` 0.21.1 with Calloop, `tiny-skia`
 ## Workspace
 
 Patin is a Cargo workspace. The root package is the `patin` toolkit crate
-itself; `crates/` holds optional, opt-in service-adapter crates that
-implement `patin::service::Provider` against a specific system service:
+itself; `crates/` holds optional, opt-in support and composition crates:
 
+- `patin-icons` — reusable vector icons expressed as Patin draw commands.
 - `patin-service-upower` — battery state over D-Bus/UPower.
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
@@ -73,8 +73,9 @@ The example connects to the compositor selected by `WAYLAND_DISPLAY`, creates
 a top layer-shell bar, and demonstrates layout, rendering, scaling, and
 damage. Its clock and its battery, volume, and network status
 providers are fixtures for proving toolkit behavior, not built-in Patin
-components. Status values are rendered as small dependency-free vector icons;
-only the time remains textual. Wi-Fi and registered cellular service are
+components. Status values are rendered as small dependency-free vector icons
+from the opt-in `patin-icons` crate; only the time remains textual. Wi-Fi and
+registered cellular service are
 independent indicators with their own signal strength, so both can appear at
 once; wired connectivity remains capability-driven as well. The clock and
 volume grow inward from the inset left edge; network transports and battery
@@ -107,10 +108,13 @@ use Wayland text-input-v3 to request the session OSK; physical keyboard input
 and a compositor's manual OSK gesture remain available fallbacks.
 The XDG window is created before the initial NetworkManager refresh, so cold
 Wi-Fi discovery cannot delay the window appearing; each page shows a loading
-label until that first refresh completes. The initial Wi-Fi list uses
-NetworkManager's current cache and shows only the connected network and saved
-networks that are presently available. “Scan for new networks” explicitly
-requests a radio rescan and then shows every discovered network.
+label until that first refresh completes. The initial Wi-Fi list shows every
+saved infrastructure profile. Cached access points add signal strength and a
+Wi-Fi icon; unavailable saved networks show a cross, while the active row is
+marked connected. Availability is refreshed from NetworkManager's cache every
+two seconds while this tab is open without forcing a radio scan. “Scan for new
+networks” explicitly requests a scan and then adds newly discovered, unsaved
+networks to the list.
 
 Library consumers implement `patin::platform::Shell`, then choose either
 layer-shell `run` for shell surfaces or `run_window` for an XDG toplevel.

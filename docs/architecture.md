@@ -163,6 +163,13 @@ details — only their composition into one `StatusSnapshot` in
 example-only detail. None of this is exported by `src/lib.rs` or ever
 constructed by `platform::run`.
 
+Reusable presentation assets follow the same opt-in boundary. The
+`patin-icons` workspace crate converts semantic states such as unavailable,
+poor, medium, and good Wi-Fi into ordinary `DrawCommand` values. The core
+toolkit does not depend on it, and neither a bar nor any other composition owns
+the shared glyph. The demo bar and network settings independently choose the
+crate and supply palettes appropriate to their own surfaces.
+
 ## Service adapters
 
 `patin::service::Provider` is a minimal, dependency-free trait: `poll(&mut
@@ -186,7 +193,10 @@ owns the domain outright:
   inside a real snapshot; an unavailable system bus returns `None`.
   It also exposes explicit essential controls. NetworkManager's `nmcli`
   frontend performs profile-heavy mutations so persistent settings and secrets
-  remain owned by NetworkManager.
+  remain owned by NetworkManager. Saved infrastructure profiles are merged
+  with cached access points so unavailable profiles remain visible; hotspot
+  profiles in AP mode are excluded. Cache-only availability refreshes do not
+  request a radio scan.
 
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in

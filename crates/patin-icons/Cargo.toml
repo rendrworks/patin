@@ -1,5 +1,5 @@
 [package]
-name = "patin-network-settings"
+name = "patin-icons"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,3 @@ publish.workspace = true
 
 [dependencies]
 patin = { path = "../.." }
-patin-icons = { path = "../patin-icons" }
-patin-service-network = { path = "../patin-service-network" }
-zeroize = "=1.9.0"

@@ -14,12 +14,14 @@ smithay-client-toolkit = { version = "=0.21.1", default-features = false, featur
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+patin-icons = { path = "crates/patin-icons" }
 patin-service-network = { path = "crates/patin-service-network" }
 patin-service-upower = { path = "crates/patin-service-upower" }
 patin-service-volume = { path = "crates/patin-service-volume" }
 
 [workspace]
 members = [
+    "crates/patin-icons",
     "crates/patin-launcher",
     "crates/patin-lock",
     "crates/patin-network-settings",

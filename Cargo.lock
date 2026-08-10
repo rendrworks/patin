@@ -952,11 +952,19 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-text",
+ "patin-icons",
  "patin-service-network",
  "patin-service-upower",
  "patin-service-volume",
  "smithay-client-toolkit",
  "tiny-skia",
+]
+
+[[package]]
+name = "patin-icons"
+version = "0.1.0"
+dependencies = [
+ "patin",
 ]
 
 [[package]]
@@ -987,6 +995,7 @@ name = "patin-network-settings"
 version = "0.1.0"
 dependencies = [
  "patin",
+ "patin-icons",
  "patin-service-network",
  "zeroize",
 ]

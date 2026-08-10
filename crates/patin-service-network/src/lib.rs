@@ -6,7 +6,7 @@
 //! rather than collapsing everything into one "primary" connection.
 
 use patin::service::Provider;
-use std::{collections::HashSet, fmt, process::Command};
+use std::{fmt, process::Command};
 use zbus::zvariant::OwnedObjectPath;
 
 const HOTSPOT_PROFILE: &str = "Patin Hotspot";
@@ -36,6 +36,14 @@ pub struct WifiNetwork {
     pub strength: u8,
     pub security: WifiSecurity,
     pub active: bool,
+    pub available: bool,
+    pub known: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WifiProfile {
+    uuid: String,
+    ssid: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,12 +112,29 @@ impl NetworkProvider {
 
     pub fn known_wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
         let networks = self.visible_wifi_networks(false)?;
-        let known_ssids = wifi_profiles()?.into_iter().map(|(_, ssid)| ssid).collect();
-        Ok(filter_known_wifi_networks(networks, &known_ssids))
+        Ok(merge_wifi_profiles(networks, &wifi_profiles()?, false))
     }
 
     pub fn scan_wifi_networks(&self) -> Result<Vec<WifiNetwork>, NetworkError> {
-        self.visible_wifi_networks(true)
+        let networks = self.visible_wifi_networks(true)?;
+        Ok(merge_wifi_profiles(networks, &wifi_profiles()?, true))
+    }
+
+    pub fn refresh_wifi_networks(
+        &self,
+        current: &[WifiNetwork],
+        include_unknown: bool,
+    ) -> Result<Vec<WifiNetwork>, NetworkError> {
+        let profiles = current
+            .iter()
+            .filter(|network| network.known)
+            .map(|network| WifiProfile {
+                uuid: String::new(),
+                ssid: network.ssid.clone(),
+            })
+            .collect::<Vec<_>>();
+        let networks = self.visible_wifi_networks(false)?;
+        Ok(merge_wifi_profiles(networks, &profiles, include_unknown))
     }
 
     fn visible_wifi_networks(&self, rescan: bool) -> Result<Vec<WifiNetwork>, NetworkError> {
@@ -143,6 +168,8 @@ impl NetworkProvider {
                 strength: fields[2].parse().unwrap_or(0),
                 security,
                 active: fields[0] == "*" || fields[0] == "yes",
+                available: true,
+                known: false,
             };
             merge_wifi_network(&mut networks, candidate);
         }
@@ -342,14 +369,45 @@ impl NetworkProvider {
     }
 }
 
-fn filter_known_wifi_networks(
+fn merge_wifi_profiles(
     networks: Vec<WifiNetwork>,
-    known_ssids: &HashSet<String>,
+    profiles: &[WifiProfile],
+    include_unknown: bool,
 ) -> Vec<WifiNetwork> {
-    networks
-        .into_iter()
-        .filter(|network| network.active || known_ssids.contains(&network.ssid))
-        .collect()
+    let mut result = if include_unknown {
+        networks
+    } else {
+        networks
+            .into_iter()
+            .filter(|network| {
+                network.active || profiles.iter().any(|profile| profile.ssid == network.ssid)
+            })
+            .collect()
+    };
+    for network in &mut result {
+        network.known = profiles.iter().any(|profile| profile.ssid == network.ssid);
+    }
+    for profile in profiles {
+        if !result.iter().any(|network| network.ssid == profile.ssid) {
+            result.push(WifiNetwork {
+                ssid: profile.ssid.clone(),
+                strength: 0,
+                security: WifiSecurity::Unsupported,
+                active: false,
+                available: false,
+                known: true,
+            });
+        }
+    }
+    result.sort_by(|left, right| {
+        right
+            .active
+            .cmp(&left.active)
+            .then_with(|| right.available.cmp(&left.available))
+            .then_with(|| right.strength.cmp(&left.strength))
+            .then_with(|| left.ssid.to_lowercase().cmp(&right.ssid.to_lowercase()))
+    });
+    result
 }
 
 fn merge_wifi_network(networks: &mut Vec<WifiNetwork>, candidate: WifiNetwork) {
@@ -376,7 +434,7 @@ fn wifi_profile_uuids(profiles: &str) -> Vec<String> {
         .collect()
 }
 
-fn wifi_profiles() -> Result<Vec<(String, String)>, NetworkError> {
+fn wifi_profiles() -> Result<Vec<WifiProfile>, NetworkError> {
     let overview = nmcli(&[
         "--terse",
         "--escape",
@@ -389,26 +447,57 @@ fn wifi_profiles() -> Result<Vec<(String, String)>, NetworkError> {
     Ok(wifi_profile_uuids(&overview)
         .into_iter()
         .filter_map(|uuid| {
-            nmcli(&[
+            let values = nmcli(&[
+                "--terse",
+                "--escape",
+                "yes",
                 "--get-values",
-                "802-11-wireless.ssid",
+                "802-11-wireless.ssid,802-11-wireless.mode",
                 "connection",
                 "show",
                 "uuid",
                 &uuid,
             ])
-            .ok()
-            .map(|ssid| (uuid, ssid.trim().to_owned()))
+            .ok()?;
+            parse_wifi_profile(&uuid, &values)
         })
-        .filter(|(_, ssid)| !ssid.is_empty())
         .collect())
 }
 
-fn wifi_profile_uuid<'a>(profiles: &'a [(String, String)], ssid: &str) -> Option<&'a str> {
+fn parse_wifi_profile(uuid: &str, values: &str) -> Option<WifiProfile> {
+    let mut lines = values.lines();
+    let ssid = unescape_field(lines.next()?).trim().to_owned();
+    let mode = lines.next().unwrap_or_default().trim();
+    (!ssid.is_empty() && mode != "ap").then(|| WifiProfile {
+        uuid: uuid.into(),
+        ssid,
+    })
+}
+
+fn unescape_field(value: &str) -> String {
+    let mut result = String::new();
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            result.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else {
+            result.push(character);
+        }
+    }
+    if escaped {
+        result.push('\\');
+    }
+    result
+}
+
+fn wifi_profile_uuid<'a>(profiles: &'a [WifiProfile], ssid: &str) -> Option<&'a str> {
     profiles
         .iter()
-        .find(|(_, profile_ssid)| profile_ssid == ssid)
-        .map(|(uuid, _)| uuid.as_str())
+        .find(|profile| profile.ssid == ssid)
+        .map(|profile| profile.uuid.as_str())
 }
 
 impl Default for NetworkProvider {
@@ -615,12 +704,10 @@ fn validate_hotspot(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::{
-        NetworkProvider, NetworkSnapshot, Provider, WifiNetwork, WifiSecurity,
-        filter_known_wifi_networks, merge_wifi_network, split_escaped, validate_hotspot,
-        wifi_profile_uuid, wifi_profile_uuids,
+        NetworkProvider, NetworkSnapshot, Provider, WifiNetwork, WifiProfile, WifiSecurity,
+        merge_wifi_network, merge_wifi_profiles, parse_wifi_profile, split_escaped,
+        validate_hotspot, wifi_profile_uuid, wifi_profile_uuids,
     };
 
     #[test]
@@ -667,8 +754,14 @@ mod tests {
     #[test]
     fn selects_saved_profile_uuid_by_actual_ssid() {
         let profiles = vec![
-            ("delta-uuid".into(), "DELTA-6c60c4".into()),
-            ("ziggo-uuid".into(), "Ziggo7827342".into()),
+            WifiProfile {
+                uuid: "delta-uuid".into(),
+                ssid: "DELTA-6c60c4".into(),
+            },
+            WifiProfile {
+                uuid: "ziggo-uuid".into(),
+                ssid: "Ziggo7827342".into(),
+            },
         ];
         assert_eq!(
             wifi_profile_uuid(&profiles, "Ziggo7827342"),
@@ -678,29 +771,56 @@ mod tests {
     }
 
     #[test]
-    fn known_list_keeps_connected_and_saved_visible_networks() {
+    fn known_list_includes_unavailable_profiles_and_omits_unknown_networks() {
         let network = |ssid: &str, active| WifiNetwork {
             ssid: ssid.into(),
             strength: 50,
             security: WifiSecurity::Personal,
             active,
+            available: true,
+            known: false,
         };
-        let known_ssids = HashSet::from(["Home".to_owned()]);
+        let profiles = [
+            WifiProfile {
+                uuid: "home".into(),
+                ssid: "Home".into(),
+            },
+            WifiProfile {
+                uuid: "away".into(),
+                ssid: "Away".into(),
+            },
+        ];
 
-        assert_eq!(
-            filter_known_wifi_networks(
-                vec![
-                    network("Connected", true),
-                    network("Home", false),
-                    network("New cafe", false),
-                ],
-                &known_ssids,
-            )
-            .iter()
-            .map(|network| network.ssid.as_str())
-            .collect::<Vec<_>>(),
-            ["Connected", "Home"]
+        let result = merge_wifi_profiles(
+            vec![
+                network("Connected", true),
+                network("Home", false),
+                network("New cafe", false),
+            ],
+            &profiles,
+            false,
         );
+        assert_eq!(
+            result
+                .iter()
+                .map(|network| network.ssid.as_str())
+                .collect::<Vec<_>>(),
+            ["Connected", "Home", "Away"]
+        );
+        assert!(result[1].known && result[1].available);
+        assert!(result[2].known && !result[2].available);
+    }
+
+    #[test]
+    fn profile_parser_excludes_access_point_mode() {
+        assert_eq!(
+            parse_wifi_profile("home", "Cafe\\: upstairs\ninfrastructure\n"),
+            Some(WifiProfile {
+                uuid: "home".into(),
+                ssid: "Cafe: upstairs".into(),
+            })
+        );
+        assert_eq!(parse_wifi_profile("hotspot", "Patin\nap\n"), None);
     }
 
     #[test]
@@ -710,6 +830,8 @@ mod tests {
             strength: 90,
             security: WifiSecurity::Personal,
             active: false,
+            available: true,
+            known: true,
         }];
         merge_wifi_network(
             &mut networks,
@@ -718,6 +840,8 @@ mod tests {
                 strength: 69,
                 security: WifiSecurity::Personal,
                 active: true,
+                available: true,
+                known: true,
             },
         );
 
