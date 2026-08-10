@@ -348,6 +348,20 @@ struct ActiveTouch {
 }
 
 impl Patin {
+    fn ensure_text_input(&mut self, seat: &wl_seat::WlSeat, queue_handle: &QueueHandle<Self>) {
+        if let Some(manager) = &self.text_input_manager
+            && !self.text_inputs.iter().any(|known| known.seat == *seat)
+        {
+            self.text_inputs.push(TextInputHandle {
+                proxy: manager.get_text_input(seat, queue_handle, ()),
+                seat: seat.clone(),
+                entered: false,
+                applied: None,
+                pending_commit: None,
+            });
+        }
+    }
+
     fn sync_text_input(&mut self) {
         let desired = self.shell.text_input();
         for handle in &mut self.text_inputs {
@@ -752,17 +766,7 @@ impl SeatHandler for Patin {
         queue_handle: &QueueHandle<Self>,
         seat: wl_seat::WlSeat,
     ) {
-        if let Some(manager) = &self.text_input_manager
-            && !self.text_inputs.iter().any(|known| known.seat == seat)
-        {
-            self.text_inputs.push(TextInputHandle {
-                proxy: manager.get_text_input(&seat, queue_handle, ()),
-                seat,
-                entered: false,
-                applied: None,
-                pending_commit: None,
-            });
-        }
+        self.ensure_text_input(&seat, queue_handle);
     }
 
     fn new_capability(
@@ -772,6 +776,7 @@ impl SeatHandler for Patin {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        self.ensure_text_input(&seat, queue_handle);
         match capability {
             Capability::Pointer if !self.pointers.iter().any(|(known, _)| known == &seat) => {
                 match self.seat_state.get_pointer(queue_handle, &seat) {

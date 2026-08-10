@@ -25,6 +25,11 @@ input for the focused surface, supplies the content purpose, and disables it
 when editing ends. Missing protocol support is non-fatal: injected
 `wl_keyboard` events and physical keyboards continue to work.
 
+The text-input object is created idempotently when either a new seat or its
+first capability is reported. This matters for seats already present during
+registry initialization: their capability events still arrive, while a later
+application-level `new_seat` callback is not guaranteed.
+
 The adaptive touch keyboard is private to `patin-lock` again. Network settings
 contains no OSK layout or provider command. This keeps Patin usable without
 0xin and allows wvkbd today—or a future `patin-keyboard`—to satisfy the same
@@ -99,3 +104,15 @@ after deferred refresh:  real 0.00s
 The optimized binary was rebuilt and installed, then remained connected to the
 live compositor until the three-second smoke-test timeout. The larger practical
 gain is that a cold `nmcli --rescan yes` can no longer delay XDG window creation.
+
+After correcting startup-time seat handling, an FP5 `WAYLAND_DEBUG=1` trace of
+the installed client confirmed both sides of focus establishment:
+
+```text
+zwp_text_input_manager_v3.get_text_input(..., wl_seat)
+zwp_text_input_v3.enter(wl_surface)
+```
+
+Before the correction, the manager global was bound but no text-input object
+was created, so editing could accept manually injected wvkbd keys but could not
+automatically request that the compositor show the OSK.

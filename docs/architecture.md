@@ -206,6 +206,12 @@ text-input-v3 and the compositor chooses the session OSK. Network settings is
 an XDG toplevel, while bars and transient shell compositions continue to use
 layer-shell.
 
+Seat globals can already exist when Smithay Client Toolkit constructs
+`SeatState`, so the platform idempotently creates each seat's text-input-v3
+object from both `new_seat` and the later capability callbacks. Relying only on
+`new_seat` would leave startup-time seats with physical input but no text-input
+object, preventing automatic OSK activation.
+
 The lock is intentionally different. Its touch keyboard, password buffer, and
 PAM flow are private to `patin-lock`, so authentication never depends on a
 session OSK or a focused normal application.
