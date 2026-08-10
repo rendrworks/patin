@@ -39,6 +39,11 @@ password or a hotspot SSID/password field advertises the matching text-input
 purpose and visibly marks the edited value. Enter submits, Escape cancels, and
 page changes or close requests end text input.
 
+The client creates and commits its XDG toplevel before its initial synchronous
+network refresh. Network data is loaded by the first one-second shell update;
+an explicit loading label prevents the default snapshot from being presented
+as real state while allowing the compositor to map the window immediately.
+
 Launcher search is deliberately not part of this stage. It will become the
 next consumer of the same window/text-input boundary without importing lock
 keyboard code.
@@ -50,7 +55,7 @@ Local verification on 2026-08-10:
 ```text
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
-  36 passed; 0 failed
+  37 passed; 0 failed
 cargo clippy --workspace --all-targets --all-features -- -D warnings
   finished successfully
 mdbook build
@@ -77,3 +82,16 @@ the updated 0xin on the same FP5, its Wayland trace discovered and bound both
 The running graphical login deliberately was not terminated remotely. The
 tap-to-show, typing, and edit-end-to-hide acceptance sequence therefore remains
 to be checked after the next normal logout/login loads the rebuilt compositor.
+
+The later startup-path refinement was measured on the FP5 by pointing the
+client at a nonexistent Wayland socket, which isolates construction before
+`run_window` connects:
+
+```text
+before deferred refresh: real 0.35s
+after deferred refresh:  real 0.00s
+```
+
+The optimized binary was rebuilt and installed, then remained connected to the
+live compositor until the three-second smoke-test timeout. The larger practical
+gain is that a cold `nmcli --rescan yes` can no longer delay XDG window creation.

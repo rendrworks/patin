@@ -46,6 +46,17 @@ pub struct HotspotConfig {
     pub band: HotspotBand,
 }
 
+impl Default for HotspotConfig {
+    fn default() -> Self {
+        Self {
+            ssid: "Patin".into(),
+            password_configured: false,
+            security: HotspotSecurity::Open,
+            band: HotspotBand::Automatic,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HotspotSecurity {
     Open,

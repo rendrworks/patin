@@ -105,6 +105,9 @@ Network settings is an ordinary XDG toplevel, so the compositor can tile,
 move, resize, focus, and close it like any other application. Editable fields
 use Wayland text-input-v3 to request the session OSK; physical keyboard input
 and a compositor's manual OSK gesture remain available fallbacks.
+The XDG window is created before the initial NetworkManager refresh, so cold
+Wi-Fi discovery cannot delay the window appearing; each page shows a loading
+label until that first refresh completes.
 
 Library consumers implement `patin::platform::Shell`, then choose either
 layer-shell `run` for shell surfaces or `run_window` for an XDG toplevel.

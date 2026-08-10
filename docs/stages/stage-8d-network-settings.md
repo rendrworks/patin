@@ -39,6 +39,13 @@ with at most one child per bar. `PATIN_NETWORK_SETTINGS_PROGRAM` can replace
 the executable; `--page=hotspot` is available to other launchers and all three
 pages remain reachable through tabs. No 0xin-specific code is involved.
 
+Window construction does not perform NetworkManager or `nmcli` discovery.
+The first regular shell update loads the status snapshot, Wi-Fi list, and
+hotspot profile after the compositor has had a chance to configure and draw
+the XDG window. Until then, the selected page explicitly says it is loading.
+This preserves the same data and refresh operations without making a cold
+Wi-Fi scan part of perceived launch time.
+
 Enterprise enrollment, IP/DNS/routes, APN/roaming/SIM editing, multiple
 hotspots, and a PolicyKit agent are later work.
 

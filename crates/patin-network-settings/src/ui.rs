@@ -63,16 +63,14 @@ pub struct NetworkSettings {
     editing: Option<Editing>,
     buttons: Vec<Button>,
     error: Option<String>,
+    initial_refresh_pending: bool,
     close: bool,
     damage: Vec<Rect>,
 }
 
 impl NetworkSettings {
     pub fn new(page: Option<&str>) -> Self {
-        let mut provider = NetworkProvider::new();
-        let snapshot = provider.poll().unwrap_or_default();
-        let networks = provider.wifi_networks().unwrap_or_default();
-        let hotspot = provider.hotspot_config();
+        let provider = NetworkProvider::new();
         let mut settings = Self {
             size: Size::default(),
             page: match page {
@@ -81,14 +79,15 @@ impl NetworkSettings {
                 _ => Page::Wifi,
             },
             provider,
-            snapshot,
-            networks,
-            hotspot,
+            snapshot: NetworkSnapshot::default(),
+            networks: Vec::new(),
+            hotspot: HotspotConfig::default(),
             hotspot_password: Zeroizing::new(String::new()),
             wifi_password: Zeroizing::new(String::new()),
             editing: None,
             buttons: Vec::new(),
             error: None,
+            initial_refresh_pending: true,
             close: false,
             damage: Vec::new(),
         };
@@ -122,7 +121,9 @@ impl NetworkSettings {
             Page::Wifi => {
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
-                    if self.snapshot.wifi_enabled {
+                    if self.initial_refresh_pending {
+                        "Wi-Fi: loading…"
+                    } else if self.snapshot.wifi_enabled {
                         "Wi-Fi: on"
                     } else {
                         "Wi-Fi: off"
@@ -157,7 +158,9 @@ impl NetworkSettings {
             }
             Page::Cellular => self.button(
                 Rect::new(left + 16.0, y, width - 32.0, ROW),
-                if self.snapshot.cellular_enabled {
+                if self.initial_refresh_pending {
+                    "Mobile data: loading…"
+                } else if self.snapshot.cellular_enabled {
                     "Mobile data: on"
                 } else {
                     "Mobile data: off"
@@ -167,7 +170,9 @@ impl NetworkSettings {
             Page::Hotspot => {
                 self.button(
                     Rect::new(left + 16.0, y, width - 32.0, ROW),
-                    if self.snapshot.hotspot_active {
+                    if self.initial_refresh_pending {
+                        "Hotspot: loading…"
+                    } else if self.snapshot.hotspot_active {
                         "Hotspot: on"
                     } else {
                         "Hotspot: off"
@@ -402,6 +407,17 @@ impl Shell for NetworkSettings {
         }
     }
     fn update(&mut self) -> bool {
+        if self.initial_refresh_pending {
+            self.initial_refresh_pending = false;
+            self.snapshot = self.provider.poll().unwrap_or_default();
+            match self.provider.wifi_networks() {
+                Ok(networks) => self.networks = networks,
+                Err(error) => self.error = Some(error.to_string()),
+            }
+            self.hotspot = self.provider.hotspot_config();
+            self.redraw();
+            return true;
+        }
         let next = self.provider.poll().unwrap_or_default();
         if next != self.snapshot {
             self.snapshot = next;
@@ -512,6 +528,19 @@ mod tests {
         assert_eq!(NetworkSettings::new(Some("cellular")).page, Page::Cellular);
         assert_eq!(NetworkSettings::new(Some("hotspot")).page, Page::Hotspot);
         assert_eq!(NetworkSettings::new(Some("unknown")).page, Page::Wifi);
+    }
+
+    #[test]
+    fn construction_defers_network_discovery_until_after_window_creation() {
+        let ui = NetworkSettings::new(Some("wifi"));
+        assert!(ui.initial_refresh_pending);
+        assert!(ui.networks.is_empty());
+        assert_eq!(ui.hotspot, HotspotConfig::default());
+        assert!(
+            ui.buttons
+                .iter()
+                .any(|button| button.label == "Wi-Fi: loading…")
+        );
     }
 
     #[test]
