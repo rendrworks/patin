@@ -21,22 +21,26 @@ the crate does not construct a bar or settings composition.
 `available` means the SSID occurs in its cached access-point list. The provider
 merges those sources, keeps saved-but-unavailable rows, identifies the active
 network, and excludes Wi-Fi profiles whose mode is `ap`. An explicit scan adds
-visible unknown networks; normal refreshes reuse the current known set and
-read only NetworkManager's cache.
+visible unknown networks; normal refreshes reuse the current known set.
+NetworkManager can retain stale access-point objects, so availability also
+requires a D-Bus `LastSeen` timestamp no older than thirty seconds. The active
+connection always remains available.
 
 ## Composition behavior
 
 The demo bar consumes the shared icon for its connected signal and unavailable
 state. Network settings uses the same four states beside each row: cached
 strength selects poor, medium, or good, while an unavailable saved network gets
-a cross. Text still includes the exact percentage and marks the active row as
-connected.
+a cross. The icon carries signal strength without a redundant numeric
+percentage; text marks only the active row as connected.
 
-The Wi-Fi page refreshes cached availability every two one-second shell update
-ticks. It never turns that refresh into a scan; the separate Scan button is the
-only operation that requests new radio discovery. Unknown scan results do not
-receive a Forget action. Saved rows reserve an 82-logical-pixel centered Forget
-button, keeping its label and bounds inside the row on the phone-sized layout.
+The Wi-Fi page refreshes availability every two one-second shell update ticks
+and requests a lightweight background scan every ten ticks. This lets an
+offline access point age out without continuously scanning the radio. The Scan
+button still requests immediate discovery and reveals unknown results. Unknown
+scan results do not receive a Forget action. Saved rows reserve an
+82-logical-pixel centered Forget button, keeping its label and bounds inside
+the row on the phone-sized layout.
 
 ## Changed files and important functions
 
@@ -47,10 +51,12 @@ button, keeping its label and bounds inside the row on the phone-sized layout.
   `patin-icons`; `wifi_palette` keeps the bar's colors local.
 - `crates/patin-service-network/src/lib.rs`: `merge_wifi_profiles` combines
   saved and cached state; `parse_wifi_profile` excludes AP-mode profiles;
-  `refresh_wifi_networks` updates availability without rescanning.
+  `access_point_is_recent` rejects stale cache objects;
+  `request_wifi_scan` uses NetworkManager D-Bus without blocking on `nmcli`;
+  `refresh_wifi_networks` updates the merged state.
 - `crates/patin-network-settings/src/ui.rs`: `NetworkSettings::layout` places
-  icons and fitting actions; `wifi_refresh_due` schedules cache refreshes;
-  `NetworkSettings::update` applies them only on the Wi-Fi page.
+  icons and fitting actions; `wifi_refresh_due` and `wifi_scan_due` schedule
+  state refreshes and background discovery only on the Wi-Fi page.
 - Workspace manifests opt the demo and settings composition into the new icon
   crate. README, architecture, roadmap, and earlier stage notes describe the
   resulting ownership and behavior.
@@ -65,7 +71,7 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
   finished successfully
 cargo test --workspace --all-targets
-  50 passed; 0 failed
+  53 passed; 0 failed
 cargo clippy --workspace --all-targets --all-features -- -D warnings
   finished successfully
 mdbook build
@@ -88,7 +94,8 @@ PKG_CONFIG_PATH=~/proj/0xin/.sysroot/usr/lib/pkgconfig \
 
 The settings binary was installed as `~/.local/bin/patin-network-settings` and
 the demo bar as `~/.local/bin/patin`; each installed SHA-256 matched its native
-release artifact. A six-second settings smoke test connected to the live 0xin
-Wayland session, mapped without a NetworkManager/profile error, and remained
-alive until timeout exit 143. The already-running bar process was not restarted
-remotely, so it will load the shared-icon build on its next normal launch.
+release artifact. A fifteen-second settings smoke test connected to the live
+0xin Wayland session, mapped without a NetworkManager/profile error, crossed
+the automatic ten-second D-Bus scan boundary, and was then stopped explicitly.
+The already-running bar process was not restarted remotely, so it will load the
+shared-icon build on its next normal launch.

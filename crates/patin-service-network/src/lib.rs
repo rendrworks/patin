@@ -6,10 +6,11 @@
 //! rather than collapsing everything into one "primary" connection.
 
 use patin::service::Provider;
-use std::{fmt, process::Command};
-use zbus::zvariant::OwnedObjectPath;
+use std::{collections::HashMap, fmt, fs, process::Command};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 const HOTSPOT_PROFILE: &str = "Patin Hotspot";
+const WIFI_FRESHNESS_SECONDS: i32 = 30;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NetworkSnapshot {
@@ -120,6 +121,47 @@ impl NetworkProvider {
         Ok(merge_wifi_profiles(networks, &wifi_profiles()?, true))
     }
 
+    pub fn request_wifi_scan(&self) -> Result<(), NetworkError> {
+        let connection = self
+            .connection
+            .as_ref()
+            .ok_or_else(|| NetworkError("NetworkManager D-Bus is unavailable".into()))?;
+        let network_manager = zbus::blocking::Proxy::new(
+            connection,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            "org.freedesktop.NetworkManager",
+        )
+        .map_err(|error| NetworkError(format!("could not access NetworkManager: {error}")))?;
+        let devices: Vec<OwnedObjectPath> = network_manager
+            .call("GetDevices", &())
+            .map_err(|error| NetworkError(format!("could not list network devices: {error}")))?;
+        for path in devices {
+            let device = zbus::blocking::Proxy::new(
+                connection,
+                "org.freedesktop.NetworkManager",
+                path.as_str(),
+                "org.freedesktop.NetworkManager.Device",
+            )
+            .map_err(|error| NetworkError(format!("could not inspect network device: {error}")))?;
+            if device.get_property::<u32>("DeviceType").unwrap_or(0) != 2 {
+                continue;
+            }
+            let wireless = zbus::blocking::Proxy::new(
+                connection,
+                "org.freedesktop.NetworkManager",
+                path.as_str(),
+                "org.freedesktop.NetworkManager.Device.Wireless",
+            )
+            .map_err(|error| NetworkError(format!("could not access Wi-Fi device: {error}")))?;
+            let options = HashMap::<String, OwnedValue>::new();
+            return wireless
+                .call("RequestScan", &options)
+                .map_err(|error| NetworkError(format!("could not request Wi-Fi scan: {error}")));
+        }
+        Err(NetworkError("no Wi-Fi device is available".into()))
+    }
+
     pub fn refresh_wifi_networks(
         &self,
         current: &[WifiNetwork],
@@ -143,7 +185,7 @@ impl NetworkProvider {
             "--escape",
             "yes",
             "--fields",
-            "IN-USE,SSID,SIGNAL,SECURITY",
+            "IN-USE,SSID,SIGNAL,SECURITY,DBUS-PATH",
             "device",
             "wifi",
             "list",
@@ -153,7 +195,7 @@ impl NetworkProvider {
         let mut networks = Vec::<WifiNetwork>::new();
         for line in output.lines() {
             let fields = split_escaped(line);
-            if fields.len() != 4 || fields[1].is_empty() {
+            if fields.len() != 5 || fields[1].is_empty() {
                 continue;
             }
             let security = if fields[3].is_empty() || fields[3] == "--" {
@@ -163,11 +205,15 @@ impl NetworkProvider {
             } else {
                 WifiSecurity::Unsupported
             };
+            let active = fields[0] == "*" || fields[0] == "yes";
+            if !active && !self.access_point_is_recent(&fields[4]) {
+                continue;
+            }
             let candidate = WifiNetwork {
                 ssid: fields[1].clone(),
                 strength: fields[2].parse().unwrap_or(0),
                 security,
-                active: fields[0] == "*" || fields[0] == "yes",
+                active,
                 available: true,
                 known: false,
             };
@@ -180,6 +226,27 @@ impl NetworkProvider {
             )
         });
         Ok(networks)
+    }
+
+    fn access_point_is_recent(&self, path: &str) -> bool {
+        let Some(connection) = &self.connection else {
+            return true;
+        };
+        let Some(uptime) = system_uptime_seconds() else {
+            return true;
+        };
+        let Ok(access_point) = zbus::blocking::Proxy::new(
+            connection,
+            "org.freedesktop.NetworkManager",
+            path,
+            "org.freedesktop.NetworkManager.AccessPoint",
+        ) else {
+            return false;
+        };
+        let Ok(last_seen) = access_point.get_property::<i32>("LastSeen") else {
+            return false;
+        };
+        wifi_last_seen_is_recent(last_seen, uptime)
     }
 
     pub fn set_wifi_enabled(&self, enabled: bool) -> Result<(), NetworkError> {
@@ -493,6 +560,21 @@ fn unescape_field(value: &str) -> String {
     result
 }
 
+fn system_uptime_seconds() -> Option<i32> {
+    fs::read_to_string("/proc/uptime")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn wifi_last_seen_is_recent(last_seen: i32, uptime: i32) -> bool {
+    last_seen >= 0 && uptime.saturating_sub(last_seen) <= WIFI_FRESHNESS_SECONDS
+}
+
 fn wifi_profile_uuid<'a>(profiles: &'a [WifiProfile], ssid: &str) -> Option<&'a str> {
     profiles
         .iter()
@@ -707,7 +789,7 @@ mod tests {
     use super::{
         NetworkProvider, NetworkSnapshot, Provider, WifiNetwork, WifiProfile, WifiSecurity,
         merge_wifi_network, merge_wifi_profiles, parse_wifi_profile, split_escaped,
-        validate_hotspot, wifi_profile_uuid, wifi_profile_uuids,
+        validate_hotspot, wifi_last_seen_is_recent, wifi_profile_uuid, wifi_profile_uuids,
     };
 
     #[test]
@@ -821,6 +903,14 @@ mod tests {
             })
         );
         assert_eq!(parse_wifi_profile("hotspot", "Patin\nap\n"), None);
+    }
+
+    #[test]
+    fn access_point_availability_expires_after_thirty_seconds() {
+        assert!(wifi_last_seen_is_recent(980, 1_000));
+        assert!(wifi_last_seen_is_recent(970, 1_000));
+        assert!(!wifi_last_seen_is_recent(969, 1_000));
+        assert!(!wifi_last_seen_is_recent(-1, 1_000));
     }
 
     #[test]

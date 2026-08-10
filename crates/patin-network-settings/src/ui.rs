@@ -12,6 +12,7 @@ use zeroize::Zeroizing;
 
 const ROW: f32 = 52.0;
 const WIFI_REFRESH_TICKS: u8 = 2;
+const WIFI_SCAN_TICKS: u8 = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -74,6 +75,7 @@ pub struct NetworkSettings {
     scan_pending: bool,
     show_discovered: bool,
     wifi_refresh_ticks: u8,
+    wifi_scan_ticks: u8,
     close: bool,
     damage: Vec<Rect>,
 }
@@ -102,6 +104,7 @@ impl NetworkSettings {
             scan_pending: false,
             show_discovered: false,
             wifi_refresh_ticks: 0,
+            wifi_scan_ticks: 0,
             close: false,
             damage: Vec::new(),
         };
@@ -201,9 +204,9 @@ impl NetworkSettings {
                     let label = if !network.available {
                         format!("{} • unavailable", network.ssid)
                     } else if network.active {
-                        format!("{} • {}% • connected", network.ssid, network.strength)
+                        format!("{} • connected", network.ssid)
                     } else {
-                        format!("{} • {}%", network.ssid, network.strength)
+                        network.ssid.clone()
                     };
                     self.wifi_icons.push((
                         Rect::new(main_bounds.origin.x + 8.0, y + 14.0, 24.0, 24.0),
@@ -416,6 +419,7 @@ impl NetworkSettings {
                 self.page = Page::Wifi;
                 self.editing = None;
                 self.wifi_refresh_ticks = WIFI_REFRESH_TICKS;
+                self.wifi_scan_ticks = WIFI_SCAN_TICKS;
                 self.redraw();
             }
             Action::CellularPage => {
@@ -553,6 +557,7 @@ impl Shell for NetworkSettings {
             }
             self.hotspot = self.provider.hotspot_config();
             self.wifi_refresh_ticks = 0;
+            self.wifi_scan_ticks = 0;
             self.redraw();
             return true;
         }
@@ -564,6 +569,7 @@ impl Shell for NetworkSettings {
                     self.error = None;
                     self.show_discovered = true;
                     self.wifi_refresh_ticks = 0;
+                    self.wifi_scan_ticks = 0;
                 }
                 Err(error) => self.error = Some(error.to_string()),
             }
@@ -575,6 +581,15 @@ impl Shell for NetworkSettings {
         if next != self.snapshot {
             self.snapshot = next;
             changed = true;
+        }
+        if wifi_scan_due(self.page, &mut self.wifi_scan_ticks)
+            && let Err(error) = self.provider.request_wifi_scan()
+        {
+            let error = error.to_string();
+            if self.error.as_deref() != Some(&error) {
+                self.error = Some(error);
+                changed = true;
+            }
         }
         if wifi_refresh_due(self.page, &mut self.wifi_refresh_ticks) {
             match self
@@ -717,6 +732,18 @@ fn wifi_refresh_due(page: Page, ticks: &mut u8) -> bool {
     }
     *ticks = ticks.saturating_add(1);
     if *ticks < WIFI_REFRESH_TICKS {
+        return false;
+    }
+    *ticks = 0;
+    true
+}
+
+fn wifi_scan_due(page: Page, ticks: &mut u8) -> bool {
+    if page != Page::Wifi {
+        return false;
+    }
+    *ticks = ticks.saturating_add(1);
+    if *ticks < WIFI_SCAN_TICKS {
         return false;
     }
     *ticks = 0;
@@ -900,11 +927,47 @@ mod tests {
     }
 
     #[test]
+    fn available_network_rows_use_icons_without_numeric_percentages() {
+        let mut ui = NetworkSettings::new(Some("wifi"));
+        ui.initial_refresh_pending = false;
+        ui.networks = vec![WifiNetwork {
+            ssid: "DELTA".into(),
+            strength: 69,
+            security: WifiSecurity::Personal,
+            active: true,
+            available: true,
+            known: true,
+        }];
+        ui.resize(Size {
+            width: 320.0,
+            height: 480.0,
+        });
+
+        let row = ui
+            .buttons
+            .iter()
+            .find(|button| matches!(button.action, Action::Connect(0)))
+            .unwrap();
+        assert_eq!(row.label, "DELTA • connected");
+        assert!(!row.label.contains('%'));
+        assert_eq!(ui.wifi_icons[0].1, WifiSignal::Good);
+    }
+
+    #[test]
     fn wifi_cache_refresh_is_due_every_two_update_ticks() {
         let mut ticks = 0;
         assert!(!wifi_refresh_due(Page::Wifi, &mut ticks));
         assert!(wifi_refresh_due(Page::Wifi, &mut ticks));
         assert!(!wifi_refresh_due(Page::Cellular, &mut ticks));
+    }
+
+    #[test]
+    fn background_wifi_scan_is_due_every_ten_update_ticks() {
+        let mut ticks = 0;
+        for _ in 0..9 {
+            assert!(!wifi_scan_due(Page::Wifi, &mut ticks));
+        }
+        assert!(wifi_scan_due(Page::Wifi, &mut ticks));
     }
 
     #[test]

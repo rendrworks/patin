@@ -111,9 +111,11 @@ Wi-Fi discovery cannot delay the window appearing; each page shows a loading
 label until that first refresh completes. The initial Wi-Fi list shows every
 saved infrastructure profile. Cached access points add signal strength and a
 Wi-Fi icon; unavailable saved networks show a cross, while the active row is
-marked connected. Availability is refreshed from NetworkManager's cache every
-two seconds while this tab is open without forcing a radio scan. “Scan for new
-networks” explicitly requests a scan and then adds newly discovered, unsaved
+marked connected. Network rows omit a redundant numeric percentage because the
+icon carries the signal state. Availability is refreshed every two seconds while this tab
+is open. A lightweight background scan is requested every ten seconds, and
+access points not seen for thirty seconds expire to unavailable. “Scan for new
+networks” requests an immediate scan and then adds newly discovered, unsaved
 networks to the list.
 
 Library consumers implement `patin::platform::Shell`, then choose either

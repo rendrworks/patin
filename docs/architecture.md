@@ -195,8 +195,9 @@ owns the domain outright:
   frontend performs profile-heavy mutations so persistent settings and secrets
   remain owned by NetworkManager. Saved infrastructure profiles are merged
   with cached access points so unavailable profiles remain visible; hotspot
-  profiles in AP mode are excluded. Cache-only availability refreshes do not
-  request a radio scan.
+  profiles in AP mode are excluded. The adapter uses each access point's D-Bus
+  `LastSeen` timestamp rather than assuming every cached object is still in
+  range.
 
 - `crates/patin-service-volume` and `crates/patin-service-brightness` have
   no equivalent standard D-Bus interface to poll (noted in
