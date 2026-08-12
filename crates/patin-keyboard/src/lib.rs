@@ -133,6 +133,23 @@ fn keyboard(
     }
 }
 
+/// The height a keyboard of the given mode occupies at the given width,
+/// independent of any surrounding canvas. Lets a standalone surface (one
+/// that *is* the keyboard, rather than embedding it above other content)
+/// size itself exactly, with no dead space and no clipped keys.
+pub fn footprint_height(mode: KeyboardMode, width: f32) -> f32 {
+    // Large enough that every height-derived clamp in `keyboard_full` and
+    // `keyboard_numeric` (row height, key size, bottom margin) saturates at
+    // its upper bound, matching how the layout renders on real screens.
+    const REFERENCE_HEIGHT: f32 = 4000.0;
+    let layout = keyboard(mode, Page::Letters, false, width, REFERENCE_HEIGHT);
+    let top = layout
+        .iter()
+        .map(|key| key.hit_bounds.origin.y)
+        .fold(f32::INFINITY, f32::min);
+    REFERENCE_HEIGHT - top
+}
+
 fn keyboard_numeric(width: f32, height: f32) -> Vec<KeyLayout> {
     let gap = 14.0;
     let bottom_margin = bottom_margin(height);
@@ -197,7 +214,7 @@ fn keyboard_full(page: Page, shift: bool, width: f32, height: f32) -> Vec<KeyLay
     let row_height = (height * 0.058).clamp(44.0, 52.0);
     let keyboard_width = (width - 12.0).clamp(0.0, 720.0);
     let keyboard_left = (width - keyboard_width) / 2.0;
-    let top = (height - (row_height * 4.0 + gap * 3.0) - bottom_margin(height)).max(height * 0.49);
+    let top = (height - (row_height * 4.0 + gap * 3.0) - bottom_margin(height)).max(0.0);
     let mut keys = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
         let characters: Vec<char> = row.chars().collect();
@@ -277,6 +294,108 @@ fn key_colors(key: Key, shift: bool, disabled: bool) -> (Color, Color) {
     }
 }
 
+/// The `evdev`-style wire keycode a `virtual-keyboard-v1` client should send
+/// for `key`, matching the keymap returned by [`virtual_keymap_source`].
+/// `None` for keys that are consumed internally by [`TouchKeyboard::press`]
+/// and never emitted (`Shift`, `Symbols`).
+pub fn keycode_for(key: Key) -> Option<u32> {
+    key_table()
+        .iter()
+        .position(|(candidate, _)| *candidate == key)
+        .map(|index| (index + 1) as u32)
+}
+
+/// A complete, self-contained XKB keymap (`XKB_V1` text format) covering
+/// every character and control key either layout can ever emit. Levels and
+/// shift state are irrelevant here: [`TouchKeyboard::press`] already
+/// resolves the final literal `Key`, so each key in this keymap has exactly
+/// one level. Upload once via `zwp_virtual_keyboard_v1.keymap`, then use
+/// [`keycode_for`] to pick the matching wire keycode per press.
+pub fn virtual_keymap_source() -> String {
+    let table = key_table();
+    let mut keycodes = String::new();
+    let mut symbols = String::new();
+    for (index, (_, keysym)) in table.iter().enumerate() {
+        let wire_code = index + 1;
+        let xkb_code = wire_code + 8;
+        keycodes.push_str(&format!("<K{wire_code}> = {xkb_code};\n"));
+        symbols.push_str(&format!("key <K{wire_code}> {{ [ {keysym} ] }};\n"));
+    }
+    format!(
+        "xkb_keymap {{\n\
+         xkb_keycodes \"(unnamed)\" {{\n\
+         minimum = 8;\n\
+         maximum = 255;\n\
+         {keycodes}\
+         }};\n\
+         xkb_types \"(unnamed)\" {{\n\
+         type \"ONE_LEVEL\" {{\n\
+         modifiers = none;\n\
+         level_name[Level1] = \"Any\";\n\
+         }};\n\
+         }};\n\
+         xkb_compat \"(unnamed)\" {{}};\n\
+         xkb_symbols \"(unnamed)\" {{\n\
+         {symbols}\
+         }};\n\
+         }};\n"
+    )
+}
+
+/// Every `Key` the two layouts can ever emit through [`TouchKeyboard::press`],
+/// paired with its XKB keysym name, in the fixed order used to assign wire
+/// keycodes. Derived directly from the layout functions rather than
+/// duplicated by hand, so it can't drift if a row of characters changes.
+fn key_table() -> Vec<(Key, String)> {
+    let mut table: Vec<(Key, String)> = character_set()
+        .into_iter()
+        .map(|character| (Key::Character(character), keysym_name(character)))
+        .collect();
+    table.push((Key::Backspace, "BackSpace".to_string()));
+    table.push((Key::Enter, "Return".to_string()));
+    table.push((Key::Space, "space".to_string()));
+    table
+}
+
+fn character_set() -> std::collections::BTreeSet<char> {
+    let mut set = std::collections::BTreeSet::new();
+    for mode in [KeyboardMode::Full, KeyboardMode::Numeric] {
+        for page in [Page::Letters, Page::Symbols] {
+            for layout in keyboard(mode, page, false, 400.0, 4000.0) {
+                if let Key::Character(character) = layout.key {
+                    set.insert(character);
+                    set.insert(character.to_ascii_uppercase());
+                }
+            }
+        }
+    }
+    set
+}
+
+fn keysym_name(character: char) -> String {
+    match character {
+        'a'..='z' | 'A'..='Z' | '0'..='9' => character.to_string(),
+        '!' => "exclam".to_string(),
+        '#' => "numbersign".to_string(),
+        '$' => "dollar".to_string(),
+        '%' => "percent".to_string(),
+        '&' => "ampersand".to_string(),
+        '(' => "parenleft".to_string(),
+        ')' => "parenright".to_string(),
+        '*' => "asterisk".to_string(),
+        '+' => "plus".to_string(),
+        '-' => "minus".to_string(),
+        '/' => "slash".to_string(),
+        ':' => "colon".to_string(),
+        ';' => "semicolon".to_string(),
+        '=' => "equal".to_string(),
+        '?' => "question".to_string(),
+        '@' => "at".to_string(),
+        '_' => "underscore".to_string(),
+        other => unreachable!("no XKB keysym mapping for character {other:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,7 +418,12 @@ mod tests {
 
     #[test]
     fn layouts_stay_within_common_outputs() {
-        for (width, height) in [(320.0, 500.0), (509.0, 1020.0), (1920.0, 1080.0)] {
+        for (width, height) in [
+            (320.0, 500.0),
+            (509.0, 1020.0),
+            (1920.0, 1080.0),
+            (400.0, 360.0),
+        ] {
             for mode in [KeyboardMode::Numeric, KeyboardMode::Full] {
                 let commands = TouchKeyboard::new(mode).commands(width, height, false);
                 assert!(!commands.is_empty());
@@ -313,5 +437,64 @@ mod tests {
                 }));
             }
         }
+    }
+
+    #[test]
+    fn footprint_height_fits_a_standalone_surface_exactly() {
+        for width in [320.0, 400.0, 509.0, 1080.0] {
+            for mode in [KeyboardMode::Numeric, KeyboardMode::Full] {
+                let height = footprint_height(mode, width);
+                let commands = TouchKeyboard::new(mode).commands(width, height, false);
+                assert!(!commands.is_empty());
+                assert!(commands.iter().all(|command| match command {
+                    DrawCommand::RoundedFill { bounds, .. } | DrawCommand::Text { bounds, .. } =>
+                        bounds.origin.x >= 0.0
+                            && bounds.origin.y >= 0.0
+                            && bounds.origin.x + bounds.size.width <= width
+                            && bounds.origin.y + bounds.size.height <= height,
+                    _ => true,
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn every_emitted_key_has_a_unique_keycode_declared_in_the_keymap() {
+        let mut full = TouchKeyboard::new(KeyboardMode::Full);
+        let mut numeric = TouchKeyboard::new(KeyboardMode::Numeric);
+        let mut emitted = Vec::new();
+        for character in 'a'..='z' {
+            emitted.push(full.press(Key::Character(character)).unwrap());
+        }
+        for row in ["1234567890", "@#$%&*-+=", "!?_/:;()"] {
+            for character in row.chars() {
+                emitted.push(full.press(Key::Character(character)).unwrap());
+            }
+        }
+        emitted.push(full.press(Key::Backspace).unwrap());
+        emitted.push(full.press(Key::Enter).unwrap());
+        emitted.push(full.press(Key::Space).unwrap());
+        // The numeric keypad emits the same logical Backspace/Enter keys,
+        // so they resolve to the same keycodes already covered above.
+        assert_eq!(numeric.press(Key::Backspace), Some(Key::Backspace));
+        assert_eq!(numeric.press(Key::Enter), Some(Key::Enter));
+
+        let codes: Vec<u32> = emitted
+            .iter()
+            .map(|key| keycode_for(*key).unwrap_or_else(|| panic!("no keycode for {key:?}")))
+            .collect();
+        let unique: std::collections::BTreeSet<u32> = codes.iter().copied().collect();
+        assert_eq!(codes.len(), unique.len(), "keycodes must not collide");
+
+        let keymap = virtual_keymap_source();
+        for code in &codes {
+            assert!(
+                keymap.contains(&format!("<K{code}>")),
+                "keymap is missing keycode {code}"
+            );
+        }
+
+        assert_eq!(keycode_for(Key::Shift), None);
+        assert_eq!(keycode_for(Key::Symbols), None);
     }
 }

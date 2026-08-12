@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 cosmic-text = { version = "=0.19.0", default-features = false, features = ["fontconfig", "std", "swash"] }
+rustix = { version = "=1.1.4", default-features = false, features = ["std", "fs"] }
 smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop", "xkbcommon"] }
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std"] }
 
@@ -22,9 +23,11 @@ patin-service-volume = { path = "crates/patin-service-volume" }
 [workspace]
 members = [
     "crates/patin-icons",
+    "crates/patin-keyboard",
     "crates/patin-launcher",
     "crates/patin-lock",
     "crates/patin-network-settings",
+    "crates/patin-osk",
     "crates/patin-session",
     "crates/patin-service-brightness",
     "crates/patin-service-network",

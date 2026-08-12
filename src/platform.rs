@@ -27,6 +27,10 @@ use smithay_client_toolkit::{
                 wp_viewporter::WpViewporter,
             },
         },
+        protocols_misc::zwp_virtual_keyboard_v1::client::{
+            zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
+            zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
+        },
     },
     registry::{ProvidesRegistryState, RegistryState, SimpleGlobal},
     registry_handlers,
@@ -49,7 +53,12 @@ use smithay_client_toolkit::{
     },
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
-use std::{error::Error, time::Duration};
+use std::{
+    error::Error,
+    io::Write,
+    os::fd::AsFd,
+    time::{Duration, Instant},
+};
 
 use crate::{
     render::{CpuRenderer, Scale},
@@ -122,6 +131,18 @@ pub trait Shell {
         false
     }
     fn text_input(&self) -> Option<TextInputPurpose> {
+        None
+    }
+    /// A complete `XKB_V1` keymap to upload to any bound `virtual-keyboard-v1`
+    /// object, covering every key this shell will ever inject. Returning
+    /// `None` (the default) leaves virtual-keyboard support inactive.
+    fn virtual_keyboard_keymap(&self) -> Option<&str> {
+        None
+    }
+    /// An `evdev`-style wire keycode to inject as a synthetic press-then-
+    /// release, matching the keymap returned by `virtual_keyboard_keymap`.
+    /// Polled once after each `activate_at`.
+    fn take_virtual_keycode(&mut self) -> Option<u32> {
         None
     }
     fn close_requested(&self) -> bool {
@@ -277,6 +298,11 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
             .bind::<ZwpTextInputManagerV3, _, _>(&queue_handle, 1..=1, ())
             .ok(),
         text_inputs: Vec::new(),
+        virtual_keyboard_manager: globals
+            .bind::<ZwpVirtualKeyboardManagerV1, _, _>(&queue_handle, 1..=1, ())
+            .ok(),
+        virtual_keyboards: Vec::new(),
+        virtual_keyboard_epoch: Instant::now(),
         active_touches: Vec::new(),
         trace: std::env::var_os("PATIN_TRACE").is_some(),
         exit: false,
@@ -334,6 +360,9 @@ struct Patin {
     keyboards: Vec<(wl_seat::WlSeat, wl_keyboard::WlKeyboard)>,
     text_input_manager: Option<ZwpTextInputManagerV3>,
     text_inputs: Vec<TextInputHandle>,
+    virtual_keyboard_manager: Option<ZwpVirtualKeyboardManagerV1>,
+    virtual_keyboards: Vec<(wl_seat::WlSeat, ZwpVirtualKeyboardV1)>,
+    virtual_keyboard_epoch: Instant,
     active_touches: Vec<ActiveTouch>,
     trace: bool,
     exit: bool,
@@ -345,6 +374,32 @@ struct ActiveTouch {
     start: (f64, f64),
     last: (f64, f64),
     moved: bool,
+}
+
+fn upload_virtual_keymap(virtual_keyboard: &ZwpVirtualKeyboardV1, keymap: &str) {
+    const XKB_V1_FORMAT: u32 = 1; // wl_keyboard::KeymapFormat::XkbV1
+
+    // The mapped region must be null-terminated per the wl_keyboard.keymap
+    // convention that this request reuses.
+    let mut contents = keymap.as_bytes().to_vec();
+    contents.push(0);
+    let size = contents.len() as u32;
+
+    let mut file = match rustix::fs::memfd_create(
+        "patin-virtual-keyboard-keymap",
+        rustix::fs::MemfdFlags::CLOEXEC,
+    ) {
+        Ok(fd) => std::fs::File::from(fd),
+        Err(error) => {
+            eprintln!("patin: could not create keymap memfd: {error}");
+            return;
+        }
+    };
+    if let Err(error) = file.write_all(&contents) {
+        eprintln!("patin: could not write keymap: {error}");
+        return;
+    }
+    virtual_keyboard.keymap(XKB_V1_FORMAT, file.as_fd(), size);
 }
 
 impl Patin {
@@ -385,6 +440,42 @@ impl Patin {
                 handle.proxy.commit();
             }
             handle.applied = desired;
+        }
+    }
+
+    fn ensure_virtual_keyboard(
+        &mut self,
+        seat: &wl_seat::WlSeat,
+        queue_handle: &QueueHandle<Self>,
+    ) {
+        if let Some(manager) = &self.virtual_keyboard_manager
+            && !self
+                .virtual_keyboards
+                .iter()
+                .any(|(known, _)| known == seat)
+        {
+            let virtual_keyboard = manager.create_virtual_keyboard(seat, queue_handle, ());
+            if let Some(keymap) = self.shell.virtual_keyboard_keymap() {
+                upload_virtual_keymap(&virtual_keyboard, keymap);
+            }
+            self.virtual_keyboards
+                .push((seat.clone(), virtual_keyboard));
+        }
+    }
+
+    fn send_pending_virtual_key(&mut self) {
+        let Some(keycode) = self.shell.take_virtual_keycode() else {
+            return;
+        };
+        if self.virtual_keyboards.is_empty() {
+            return;
+        }
+        let time = self.virtual_keyboard_epoch.elapsed().as_millis() as u32;
+        const PRESSED: u32 = 1; // wl_keyboard::KeyState::Pressed
+        const RELEASED: u32 = 0; // wl_keyboard::KeyState::Released
+        for (_, virtual_keyboard) in &self.virtual_keyboards {
+            virtual_keyboard.key(time, keycode, PRESSED);
+            virtual_keyboard.key(time, keycode, RELEASED);
         }
     }
 
@@ -479,6 +570,7 @@ impl Patin {
     fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
         let redraw = self.shell.activate_at(position);
         self.sync_text_input();
+        self.send_pending_virtual_key();
         if self.shell.close_requested() {
             self.exit = true;
         } else if redraw {
@@ -767,6 +859,7 @@ impl SeatHandler for Patin {
         seat: wl_seat::WlSeat,
     ) {
         self.ensure_text_input(&seat, queue_handle);
+        self.ensure_virtual_keyboard(&seat, queue_handle);
     }
 
     fn new_capability(
@@ -777,6 +870,7 @@ impl SeatHandler for Patin {
         capability: Capability,
     ) {
         self.ensure_text_input(&seat, queue_handle);
+        self.ensure_virtual_keyboard(&seat, queue_handle);
         match capability {
             Capability::Pointer if !self.pointers.iter().any(|(known, _)| known == &seat) => {
                 match self.seat_state.get_pointer(queue_handle, &seat) {
@@ -858,6 +952,14 @@ impl SeatHandler for Patin {
         self.text_inputs.retain(|handle| {
             if handle.seat == seat {
                 handle.proxy.destroy();
+                false
+            } else {
+                true
+            }
+        });
+        self.virtual_keyboards.retain(|(known, virtual_keyboard)| {
+            if *known == seat {
+                virtual_keyboard.destroy();
                 false
             } else {
                 true
@@ -1116,6 +1218,8 @@ impl TouchHandler for Patin {
 
 smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpViewporter);
 smithay_client_toolkit::reexports::client::delegate_noop!(Patin: WpFractionalScaleManagerV1);
+smithay_client_toolkit::reexports::client::delegate_noop!(Patin: ZwpVirtualKeyboardManagerV1);
+smithay_client_toolkit::reexports::client::delegate_noop!(Patin: ZwpVirtualKeyboardV1);
 
 delegate_registry!(Patin);
 

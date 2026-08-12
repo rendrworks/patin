@@ -956,12 +956,20 @@ dependencies = [
  "patin-service-network",
  "patin-service-upower",
  "patin-service-volume",
+ "rustix",
  "smithay-client-toolkit",
  "tiny-skia",
 ]
 
 [[package]]
 name = "patin-icons"
+version = "0.1.0"
+dependencies = [
+ "patin",
+]
+
+[[package]]
+name = "patin-keyboard"
 version = "0.1.0"
 dependencies = [
  "patin",
@@ -986,6 +994,7 @@ dependencies = [
  "libc",
  "pam-client2",
  "patin",
+ "patin-keyboard",
  "smithay-client-toolkit",
  "zeroize",
 ]
@@ -998,6 +1007,14 @@ dependencies = [
  "patin-icons",
  "patin-service-network",
  "zeroize",
+]
+
+[[package]]
+name = "patin-osk"
+version = "0.1.0"
+dependencies = [
+ "patin",
+ "patin-keyboard",
 ]
 
 [[package]]
