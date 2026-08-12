@@ -154,6 +154,12 @@ impl VirtualKey {
 pub trait Shell {
     fn resize(&mut self, size: Size);
     fn update(&mut self) -> bool;
+    /// How often `update` is polled. Defaults to 1s; shells backed by a
+    /// fast-changing external source (e.g. a control-socket poll) can
+    /// override this for snappier feedback.
+    fn poll_interval(&self) -> Duration {
+        Duration::from_secs(1)
+    }
     fn activate_at(&mut self, position: (f64, f64)) -> bool;
     fn scroll_by(&mut self, _delta_y: f64) -> bool {
         false
@@ -317,6 +323,7 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
     let initial_pool_size =
         requested_size.0.max(1) as usize * requested_size.1.max(1) as usize * BYTES_PER_PIXEL;
     let pool = SlotPool::new(initial_pool_size, &shm)?;
+    let poll_interval = shell.poll_interval();
     let mut patin = Patin {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &queue_handle),
@@ -357,7 +364,7 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
     };
 
     event_loop.handle().insert_source(
-        Timer::from_duration(Duration::from_secs(1)),
+        Timer::from_duration(poll_interval),
         |_, _, patin| {
             if patin.shell.update() {
                 patin.redraw_requested = true;
@@ -366,7 +373,7 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
             if patin.shell.close_requested() {
                 patin.exit = true;
             }
-            TimeoutAction::ToDuration(Duration::from_secs(1))
+            TimeoutAction::ToDuration(patin.shell.poll_interval())
         },
     )?;
 

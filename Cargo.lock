@@ -1068,10 +1068,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "patin-service-workspaces"
+version = "0.1.0"
+dependencies = [
+ "patin",
+]
+
+[[package]]
 name = "patin-session"
 version = "0.1.0"
 dependencies = [
  "patin",
+]
+
+[[package]]
+name = "patin-workspaces-bar"
+version = "0.1.0"
+dependencies = [
+ "patin",
+ "patin-service-workspaces",
 ]
 
 [[package]]

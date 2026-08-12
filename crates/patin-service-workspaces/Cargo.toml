@@ -1,0 +1,11 @@
+[package]
+name = "patin-service-workspaces"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Optional 0xin workspace-state provider for Patin shells"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+patin = { path = "../.." }

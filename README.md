@@ -41,8 +41,13 @@ itself; `crates/` holds optional, opt-in support and composition crates:
 - `patin-service-volume` — audio volume/mute via `wpctl`/`pactl`.
 - `patin-service-brightness` — display backlight via `/sys/class/backlight`.
 - `patin-service-network` — connectivity state over D-Bus/NetworkManager.
+- `patin-service-workspaces` — workspace focus/occupancy state over 0xin's
+  control socket.
 - `patin-network-settings` — independently launched Wi-Fi, mobile-data, and hotspot controls.
 - `patin-launcher` — an independently launched, touch-friendly application list.
+- `patin-workspaces-bar` — an independently launched, always-on strip of
+  pills showing which workspace is focused and which have windows open;
+  the reference consumer of 0xin's `workspaces` control-socket query.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
 - `patin-session` — a compact, compositor-neutral session action menu.
