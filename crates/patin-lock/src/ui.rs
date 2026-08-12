@@ -46,7 +46,18 @@ impl LockUi {
             Key::Backspace => {
                 edited = self.password.pop().is_some();
             }
-            Key::Shift | Key::Symbols | Key::Enter | Key::Space => {}
+            Key::Shift
+            | Key::Symbols
+            | Key::Enter
+            | Key::Space
+            | Key::Tab
+            | Key::Escape
+            | Key::Ctrl
+            | Key::Alt
+            | Key::ArrowUp
+            | Key::ArrowDown
+            | Key::ArrowLeft
+            | Key::ArrowRight => {}
         }
         if edited {
             self.message.clear();

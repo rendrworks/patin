@@ -44,6 +44,7 @@ fn keyboard_mode_from_args() -> KeyboardMode {
     match value {
         Some(value) if value == "numeric" => KeyboardMode::Numeric,
         Some(value) if value == "full" => KeyboardMode::Full,
+        Some(value) if value == "extended" => KeyboardMode::Extended,
         Some(value) => {
             eprintln!("patin-osk: unrecognized --keypad value {value:?}; using full keyboard");
             KeyboardMode::Full

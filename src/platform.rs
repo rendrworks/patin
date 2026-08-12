@@ -120,6 +120,22 @@ pub enum KeyInput {
     Escape,
 }
 
+/// A synthetic key event for `virtual-keyboard-v1` injection: an `evdev`-
+/// style wire keycode, plus any real XKB modifiers (`ControlMask`,
+/// `Mod1Mask`, i.e. Alt) that should be held for it. These are the XKB
+/// *real* modifiers — fixed core positions every keymap has regardless of
+/// its own `xkb_types`, so no keymap changes are needed to use them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtualKey {
+    pub keycode: u32,
+    pub modifiers: u32,
+}
+
+impl VirtualKey {
+    pub const CONTROL: u32 = 1 << 2;
+    pub const ALT: u32 = 1 << 3;
+}
+
 pub trait Shell {
     fn resize(&mut self, size: Size);
     fn update(&mut self) -> bool;
@@ -139,10 +155,10 @@ pub trait Shell {
     fn virtual_keyboard_keymap(&self) -> Option<&str> {
         None
     }
-    /// An `evdev`-style wire keycode to inject as a synthetic press-then-
-    /// release, matching the keymap returned by `virtual_keyboard_keymap`.
-    /// Polled once after each `activate_at`.
-    fn take_virtual_keycode(&mut self) -> Option<u32> {
+    /// A synthetic press-then-release to inject, matching the keymap
+    /// returned by `virtual_keyboard_keymap`. Polled once after each
+    /// `activate_at`.
+    fn take_virtual_key(&mut self) -> Option<VirtualKey> {
         None
     }
     fn close_requested(&self) -> bool {
@@ -464,7 +480,7 @@ impl Patin {
     }
 
     fn send_pending_virtual_key(&mut self) {
-        let Some(keycode) = self.shell.take_virtual_keycode() else {
+        let Some(VirtualKey { keycode, modifiers }) = self.shell.take_virtual_key() else {
             return;
         };
         if self.virtual_keyboards.is_empty() {
@@ -474,8 +490,14 @@ impl Patin {
         const PRESSED: u32 = 1; // wl_keyboard::KeyState::Pressed
         const RELEASED: u32 = 0; // wl_keyboard::KeyState::Released
         for (_, virtual_keyboard) in &self.virtual_keyboards {
+            if modifiers != 0 {
+                virtual_keyboard.modifiers(modifiers, 0, 0, 0);
+            }
             virtual_keyboard.key(time, keycode, PRESSED);
             virtual_keyboard.key(time, keycode, RELEASED);
+            if modifiers != 0 {
+                virtual_keyboard.modifiers(0, 0, 0, 0);
+            }
         }
     }
 

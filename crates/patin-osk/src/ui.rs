@@ -1,5 +1,5 @@
 use patin::{
-    platform::Shell,
+    platform::{Shell, VirtualKey},
     ui::{DrawCommand, Rect, Size},
 };
 use patin_keyboard::{KeyboardMode, TouchKeyboard};
@@ -8,7 +8,7 @@ pub struct OskShell {
     keyboard: TouchKeyboard,
     keymap: String,
     size: Size,
-    pending_keycode: Option<u32>,
+    pending_key: Option<VirtualKey>,
     damage: Vec<Rect>,
 }
 
@@ -18,7 +18,7 @@ impl OskShell {
             keyboard: TouchKeyboard::new(mode),
             keymap: patin_keyboard::virtual_keymap_source(),
             size: Size::default(),
-            pending_keycode: None,
+            pending_key: None,
             damage: Vec::new(),
         }
     }
@@ -47,12 +47,24 @@ impl Shell for OskShell {
         else {
             return false;
         };
-        let Some(resolved) = self.keyboard.press(key) else {
-            // Shift/Symbols: state toggled internally, nothing to inject.
+        let Some((resolved, modifiers)) = self.keyboard.press_with_modifiers(key) else {
+            // Shift/Symbols/Ctrl/Alt: state toggled internally, nothing to inject.
             self.damage_all();
             return true;
         };
-        self.pending_keycode = patin_keyboard::keycode_for(resolved);
+        self.pending_key = patin_keyboard::keycode_for(resolved).map(|keycode| {
+            let mut mask = 0;
+            if modifiers.ctrl {
+                mask |= VirtualKey::CONTROL;
+            }
+            if modifiers.alt {
+                mask |= VirtualKey::ALT;
+            }
+            VirtualKey {
+                keycode,
+                modifiers: mask,
+            }
+        });
         self.damage_all();
         true
     }
@@ -61,8 +73,8 @@ impl Shell for OskShell {
         Some(&self.keymap)
     }
 
-    fn take_virtual_keycode(&mut self) -> Option<u32> {
-        self.pending_keycode.take()
+    fn take_virtual_key(&mut self) -> Option<VirtualKey> {
+        self.pending_key.take()
     }
 
     fn commands(&self) -> Vec<DrawCommand> {
@@ -107,14 +119,17 @@ mod tests {
 
         assert!(shell.activate_at(position));
         assert_eq!(
-            shell.take_virtual_keycode(),
-            patin_keyboard::keycode_for(patin_keyboard::Key::Character('1'))
+            shell.take_virtual_key(),
+            Some(VirtualKey {
+                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('1')).unwrap(),
+                modifiers: 0,
+            })
         );
-        assert_eq!(shell.take_virtual_keycode(), None);
+        assert_eq!(shell.take_virtual_key(), None);
     }
 
     #[test]
-    fn tapping_shift_toggles_state_without_queuing_a_keycode() {
+    fn tapping_shift_toggles_state_without_queuing_a_key() {
         let mut shell = OskShell::new(KeyboardMode::Full);
         shell.resize(Size {
             width: 400.0,
@@ -123,7 +138,42 @@ mod tests {
         let position = label_center(&shell.commands(), "⇧");
 
         assert!(shell.activate_at(position));
-        assert_eq!(shell.take_virtual_keycode(), None);
+        assert_eq!(shell.take_virtual_key(), None);
+    }
+
+    #[test]
+    fn ctrl_arms_the_next_key_with_the_control_modifier() {
+        let mut shell = OskShell::new(KeyboardMode::Extended);
+        shell.resize(Size {
+            width: 400.0,
+            height: patin_keyboard::footprint_height(KeyboardMode::Extended, 400.0),
+        });
+
+        assert!(shell.activate_at(label_center(&shell.commands(), "Ctrl")));
+        assert_eq!(
+            shell.take_virtual_key(),
+            None,
+            "Ctrl only arms, doesn't inject"
+        );
+
+        assert!(shell.activate_at(label_center(&shell.commands(), "c")));
+        assert_eq!(
+            shell.take_virtual_key(),
+            Some(VirtualKey {
+                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('c')).unwrap(),
+                modifiers: VirtualKey::CONTROL,
+            })
+        );
+
+        // Ctrl released itself after the previous key.
+        assert!(shell.activate_at(label_center(&shell.commands(), "c")));
+        assert_eq!(
+            shell.take_virtual_key(),
+            Some(VirtualKey {
+                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('c')).unwrap(),
+                modifiers: 0,
+            })
+        );
     }
 
     #[test]
