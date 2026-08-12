@@ -1,3 +1,4 @@
+use calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
@@ -97,6 +98,19 @@ pub struct LayerConfig {
     pub size: (u32, u32),
     pub exclusive_zone: i32,
     pub keyboard: KeyboardPolicy,
+    pub visibility: LayerVisibility,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayerVisibility {
+    /// Always visible; no external toggle.
+    Fixed,
+    /// SIGUSR1 hides the surface (unmapping it and releasing its exclusive
+    /// zone) and SIGUSR2 shows it again — the same convention wvkbd uses,
+    /// so a compositor's existing gesture/text-input show/hide hooks work
+    /// unchanged. Opt-in per surface: most shells should not be
+    /// dismissable by an external signal (a lock screen must never be).
+    ToggleBySignal { start_visible: bool },
 }
 
 pub struct WindowConfig {
@@ -132,6 +146,7 @@ pub struct VirtualKey {
 }
 
 impl VirtualKey {
+    pub const SHIFT: u32 = 1 << 0;
     pub const CONTROL: u32 = 1 << 2;
     pub const ALT: u32 = 1 << 3;
 }
@@ -240,6 +255,16 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
             .map(|manager| manager.get_fractional_scale(&surface, &queue_handle, ()))
     });
 
+    let (initial_hidden, configured_exclusive_zone, signal_toggle_enabled) = match &config {
+        SurfaceConfig::Layer(layer_config) => match layer_config.visibility {
+            LayerVisibility::Fixed => (false, layer_config.exclusive_zone, false),
+            LayerVisibility::ToggleBySignal { start_visible } => {
+                (!start_visible, layer_config.exclusive_zone, true)
+            }
+        },
+        SurfaceConfig::Window(_) => (false, 0, false),
+    };
+
     let (role, requested_size) = match config {
         SurfaceConfig::Layer(config) => {
             let layer_shell = LayerShell::bind(&globals, &queue_handle)
@@ -263,7 +288,11 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
             anchor.set(Anchor::RIGHT, config.anchors.right);
             layer.set_anchor(anchor);
             layer.set_size(config.size.0, config.size.1);
-            layer.set_exclusive_zone(config.exclusive_zone);
+            layer.set_exclusive_zone(if initial_hidden {
+                0
+            } else {
+                config.exclusive_zone
+            });
             layer.set_keyboard_interactivity(match config.keyboard {
                 KeyboardPolicy::None => KeyboardInteractivity::None,
                 KeyboardPolicy::Exclusive => KeyboardInteractivity::Exclusive,
@@ -322,6 +351,8 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
         active_touches: Vec::new(),
         trace: std::env::var_os("PATIN_TRACE").is_some(),
         exit: false,
+        hidden: initial_hidden,
+        configured_exclusive_zone,
     };
 
     event_loop.handle().insert_source(
@@ -337,6 +368,18 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
             TimeoutAction::ToDuration(Duration::from_secs(1))
         },
     )?;
+
+    if signal_toggle_enabled {
+        let signals = Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2])?;
+        let toggle_queue_handle = queue_handle.clone();
+        event_loop
+            .handle()
+            .insert_source(signals, move |event, _, patin| match event.signal() {
+                Signal::SIGUSR1 => patin.set_hidden(true, &toggle_queue_handle),
+                Signal::SIGUSR2 => patin.set_hidden(false, &toggle_queue_handle),
+                _ => {}
+            })?;
+    }
     eprintln!("patin: connected; waiting for the compositor to configure the surface");
 
     while !patin.exit {
@@ -382,6 +425,11 @@ struct Patin {
     active_touches: Vec<ActiveTouch>,
     trace: bool,
     exit: bool,
+    hidden: bool,
+    /// The real exclusive zone to restore on `set_hidden(false)` — while
+    /// hidden the layer surface's exclusive zone is dropped to 0 so other
+    /// windows reclaim the space, matching wvkbd's hide behavior.
+    configured_exclusive_zone: i32,
 }
 
 struct ActiveTouch {
@@ -517,6 +565,33 @@ impl Patin {
         }
     }
 
+    /// Unmaps the surface and drops its exclusive zone to 0 (`hidden`), or
+    /// restores both (`!hidden`). Only meaningful for a layer surface built
+    /// with `LayerVisibility::ToggleBySignal`; a no-op otherwise since
+    /// `hidden` never becomes true for any other surface.
+    fn set_hidden(&mut self, hidden: bool, queue_handle: &QueueHandle<Self>) {
+        if self.hidden == hidden {
+            return;
+        }
+        self.hidden = hidden;
+        if let SurfaceRole::Layer(layer) = &self.role {
+            layer.set_exclusive_zone(if hidden {
+                0
+            } else {
+                self.configured_exclusive_zone
+            });
+        }
+        if hidden {
+            let surface = self.role.wl_surface();
+            surface.attach(None, 0, 0);
+            surface.commit();
+            self.redraw_requested = false;
+            self.frame_pending = false;
+        } else {
+            self.request_redraw(queue_handle);
+        }
+    }
+
     fn scroll_by(&mut self, queue_handle: &QueueHandle<Self>, delta_y: f64) {
         if self.shell.scroll_by(delta_y) {
             self.request_redraw(queue_handle);
@@ -524,6 +599,10 @@ impl Patin {
     }
 
     fn draw(&mut self, queue_handle: &QueueHandle<Self>) {
+        if self.hidden {
+            self.redraw_requested = false;
+            return;
+        }
         let Some((logical_width, logical_height)) = self.logical_size else {
             return;
         };

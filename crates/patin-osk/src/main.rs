@@ -2,11 +2,12 @@ mod ui;
 
 use std::process::ExitCode;
 
-use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel};
+use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel, LayerVisibility};
 use patin_keyboard::KeyboardMode;
 
 fn main() -> ExitCode {
     let mode = keyboard_mode_from_args();
+    let start_visible = !std::env::args().any(|argument| argument == "--hidden");
 
     // Both layouts' height math is independent of width once the screen is
     // wider than a single row of keys (true for any real phone or desktop
@@ -26,6 +27,11 @@ fn main() -> ExitCode {
         size: (0, height),
         exclusive_zone: height as i32,
         keyboard: KeyboardPolicy::None,
+        // Matches wvkbd's SIGUSR1 (hide) / SIGUSR2 (show) convention, so
+        // 0xin's existing gesture and text-input show/hide hooks work
+        // unchanged. `--hidden` mirrors 0xin's own default
+        // `keyboard_visible: false` startup assumption.
+        visibility: LayerVisibility::ToggleBySignal { start_visible },
     };
 
     match patin::platform::run(config, ui::OskShell::new(mode)) {

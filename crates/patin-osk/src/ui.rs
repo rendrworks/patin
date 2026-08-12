@@ -52,19 +52,7 @@ impl Shell for OskShell {
             self.damage_all();
             return true;
         };
-        self.pending_key = patin_keyboard::keycode_for(resolved).map(|keycode| {
-            let mut mask = 0;
-            if modifiers.ctrl {
-                mask |= VirtualKey::CONTROL;
-            }
-            if modifiers.alt {
-                mask |= VirtualKey::ALT;
-            }
-            VirtualKey {
-                keycode,
-                modifiers: mask,
-            }
-        });
+        self.pending_key = patin_keyboard::virtual_key(resolved, modifiers);
         self.damage_all();
         true
     }
@@ -120,10 +108,10 @@ mod tests {
         assert!(shell.activate_at(position));
         assert_eq!(
             shell.take_virtual_key(),
-            Some(VirtualKey {
-                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('1')).unwrap(),
-                modifiers: 0,
-            })
+            patin_keyboard::virtual_key(
+                patin_keyboard::Key::Character('1'),
+                patin_keyboard::Modifiers::default()
+            )
         );
         assert_eq!(shell.take_virtual_key(), None);
     }
@@ -160,7 +148,12 @@ mod tests {
         assert_eq!(
             shell.take_virtual_key(),
             Some(VirtualKey {
-                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('c')).unwrap(),
+                keycode: patin_keyboard::virtual_key(
+                    patin_keyboard::Key::Character('c'),
+                    patin_keyboard::Modifiers::default()
+                )
+                .unwrap()
+                .keycode,
                 modifiers: VirtualKey::CONTROL,
             })
         );
@@ -169,10 +162,39 @@ mod tests {
         assert!(shell.activate_at(label_center(&shell.commands(), "c")));
         assert_eq!(
             shell.take_virtual_key(),
-            Some(VirtualKey {
-                keycode: patin_keyboard::keycode_for(patin_keyboard::Key::Character('c')).unwrap(),
-                modifiers: 0,
-            })
+            patin_keyboard::virtual_key(
+                patin_keyboard::Key::Character('c'),
+                patin_keyboard::Modifiers::default()
+            )
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_c_is_distinct_from_plain_ctrl_c() {
+        let mut shell = OskShell::new(KeyboardMode::Extended);
+        shell.resize(Size {
+            width: 400.0,
+            height: patin_keyboard::footprint_height(KeyboardMode::Extended, 400.0),
+        });
+
+        assert!(shell.activate_at(label_center(&shell.commands(), "⇧")));
+        assert!(shell.activate_at(label_center(&shell.commands(), "Ctrl")));
+        // Shift being armed relabels the letter keys to uppercase.
+        assert!(shell.activate_at(label_center(&shell.commands(), "C")));
+        assert_eq!(
+            shell.take_virtual_key(),
+            // Same physical key as plain Ctrl+c, but with the real Shift
+            // bit also set — matching a physical keyboard, so the
+            // receiving terminal's own Ctrl+Shift+C binding can distinguish
+            // this from plain Ctrl+c.
+            patin_keyboard::virtual_key(
+                patin_keyboard::Key::Character('C'),
+                patin_keyboard::Modifiers {
+                    shift: true,
+                    ctrl: true,
+                    alt: false,
+                }
+            )
         );
     }
 

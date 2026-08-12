@@ -1,5 +1,6 @@
 //! Reusable touch keyboard geometry, state, hit-testing, and drawing.
 
+use patin::platform::VirtualKey;
 use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,8 +33,14 @@ pub enum KeyboardMode {
 /// Which held modifiers apply to a [`Key`] resolved by
 /// [`TouchKeyboard::press_with_modifiers`]. `Ctrl`/`Alt` are sticky like
 /// `Shift`: tapped once, they arm for exactly the next key, then release.
+///
+/// `shift` reports whether Shift applied to this key too (e.g. Ctrl+Shift+C).
+/// It's already folded into `Key::Character`'s case by the time you see it
+/// here, so a caller only needs it to distinguish combinations like
+/// Ctrl+Shift+C from Ctrl+C on the wire — not to re-derive the character.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Modifiers {
+    pub shift: bool,
     pub ctrl: bool,
     pub alt: bool,
 }
@@ -108,20 +115,22 @@ impl TouchKeyboard {
                 None
             }
             Key::Character(character) => {
-                let character = if self.shift {
+                let shift = self.shift;
+                let character = if shift {
                     character.to_ascii_uppercase()
                 } else {
                     character
                 };
                 self.shift = false;
-                Some((Key::Character(character), self.take_ctrl_alt()))
+                Some((Key::Character(character), self.take_modifiers(shift)))
             }
-            other => Some((other, self.take_ctrl_alt())),
+            other => Some((other, self.take_modifiers(false))),
         }
     }
 
-    fn take_ctrl_alt(&mut self) -> Modifiers {
+    fn take_modifiers(&mut self, shift: bool) -> Modifiers {
         let modifiers = Modifiers {
+            shift,
             ctrl: self.ctrl,
             alt: self.alt,
         };
@@ -187,16 +196,40 @@ fn keyboard(
 /// that *is* the keyboard, rather than embedding it above other content)
 /// size itself exactly, with no dead space and no clipped keys.
 pub fn footprint_height(mode: KeyboardMode, width: f32) -> f32 {
-    // Large enough that every height-derived clamp in `keyboard_full` and
-    // `keyboard_numeric` (row height, key size, bottom margin) saturates at
-    // its upper bound, matching how the layout renders on real screens.
-    const REFERENCE_HEIGHT: f32 = 4000.0;
-    let layout = keyboard(mode, Page::Letters, false, width, REFERENCE_HEIGHT);
-    let top = layout
-        .iter()
-        .map(|key| key.hit_bounds.origin.y)
-        .fold(f32::INFINITY, f32::min);
-    REFERENCE_HEIGHT - top
+    // Row/key sizing and the bottom safe-area margin are themselves clamped
+    // functions of height (so the keyboard stays usable on very short or
+    // very tall screens), so "the height that exactly fits this keyboard"
+    // is a fixed point, not something derivable from one arbitrary
+    // reference height — the clamps can land on different values there
+    // than they do at the real (much smaller) docked height, leaving dead
+    // space above the keys and an undersized margin below them.
+    //
+    // `height - top` at a given height *is* this mode's natural footprint
+    // if that height were the container (top = height - rows - margin, so
+    // height - top = rows + margin) — as long as `height` is large enough
+    // that `top` doesn't hit its own `.max(0.0)` safety clamp. Starting
+    // from a height that's comfortably large and iterating downward keeps
+    // `top` on its natural (positive) branch throughout, so this converges
+    // to the fixed point in a handful of steps.
+    // Measured against `visual_bounds`, not `hit_bounds`: the numeric
+    // keypad's hit targets are padded outward by half a gap for touch
+    // generosity, so using `hit_bounds` here would converge with the
+    // *touch target* flush at y=0 while the actually-drawn key sits
+    // several pixels lower — invisible slack that looks like dead space.
+    let mut height = 4000.0_f32;
+    for _ in 0..8 {
+        let layout = keyboard(mode, Page::Letters, false, width, height);
+        let top = layout
+            .iter()
+            .map(|key| key.visual_bounds.origin.y)
+            .fold(f32::INFINITY, f32::min);
+        let next = height - top;
+        if (next - height).abs() < 0.01 {
+            return next;
+        }
+        height = next;
+    }
+    height
 }
 
 fn keyboard_numeric(width: f32, height: f32) -> Vec<KeyLayout> {
@@ -391,7 +424,11 @@ fn extra_keys_row(width: f32, top: f32, row_height: f32) -> Vec<KeyLayout> {
 }
 
 fn bottom_margin(height: f32) -> f32 {
-    (height * 0.11).clamp(48.0, 112.0)
+    // The lower bound only ever binds for a compact, already-docked-at-the-
+    // bottom-edge surface (a full screen's height*0.11 always lands well
+    // above it) — there's no other content below to keep clear of there,
+    // just a small touch-safety gap, not a full gesture-nav reservation.
+    (height * 0.11).clamp(8.0, 112.0)
 }
 
 fn key_colors(key: Key, armed: bool, disabled: bool) -> (Color, Color) {
@@ -431,32 +468,74 @@ fn label_metrics(mode: KeyboardMode, key: Key) -> (f32, f32) {
     }
 }
 
-/// The `evdev`-style wire keycode a `virtual-keyboard-v1` client should send
-/// for `key`, matching the keymap returned by [`virtual_keymap_source`].
-/// `None` for keys that are consumed internally by [`TouchKeyboard::press`]
-/// and never emitted (`Shift`, `Symbols`).
-pub fn keycode_for(key: Key) -> Option<u32> {
-    key_table()
-        .iter()
-        .position(|(candidate, _)| *candidate == key)
-        .map(|index| (index + 1) as u32)
+/// The real, `evdev`-standard wire keycode and modifiers for a resolved
+/// `Key`, combining any sticky Ctrl/Alt captured by
+/// [`TouchKeyboard::press_with_modifiers`] with whichever real Shift bit
+/// the character itself needs. `None` for keys consumed internally and
+/// never emitted (`Shift`, `Symbols`).
+///
+/// This deliberately uses the same keycodes and (unshifted, shifted) key
+/// pairs as a real "us" physical keyboard, rather than a made-up numbering:
+/// a receiver tells "Ctrl+Shift+C" apart from plain "Ctrl+C" by checking
+/// which modifiers were needed to select a key's *level* (XKB's "consumed
+/// modifiers"), which only works if Shift is a real, held modifier on a key
+/// that genuinely has two levels — exactly like physical hardware, and
+/// exactly what this reproduces. It also means this keeps working even
+/// against a compositor that substitutes its own default keymap instead of
+/// honoring the one [`virtual_keymap_source`] uploads (some do).
+pub fn virtual_key(key: Key, modifiers: Modifiers) -> Option<VirtualKey> {
+    let (evdev, needs_shift) = physical_keys()
+        .into_iter()
+        .find_map(|(evdev, base, shifted)| {
+            if base == key {
+                Some((evdev, false))
+            } else if shifted == Some(key) {
+                Some((evdev, true))
+            } else {
+                None
+            }
+        })?;
+    let mut mask = 0;
+    if needs_shift {
+        mask |= VirtualKey::SHIFT;
+    }
+    if modifiers.ctrl {
+        mask |= VirtualKey::CONTROL;
+    }
+    if modifiers.alt {
+        mask |= VirtualKey::ALT;
+    }
+    Some(VirtualKey {
+        keycode: evdev,
+        modifiers: mask,
+    })
 }
 
-/// A complete, self-contained XKB keymap (`XKB_V1` text format) covering
-/// every character and control key either layout can ever emit. Levels and
-/// shift state are irrelevant here: [`TouchKeyboard::press`] already
-/// resolves the final literal `Key`, so each key in this keymap has exactly
-/// one level. Upload once via `zwp_virtual_keyboard_v1.keymap`, then use
-/// [`keycode_for`] to pick the matching wire keycode per press.
+/// A complete, self-contained XKB keymap (`XKB_V1` text format), covering
+/// every physical key [`virtual_key`] can address with the same keycodes
+/// and shift levels a real "us" layout would use for them.
 pub fn virtual_keymap_source() -> String {
-    let table = key_table();
     let mut keycodes = String::new();
     let mut symbols = String::new();
-    for (index, (_, keysym)) in table.iter().enumerate() {
-        let wire_code = index + 1;
-        let xkb_code = wire_code + 8;
-        keycodes.push_str(&format!("<K{wire_code}> = {xkb_code};\n"));
-        symbols.push_str(&format!("key <K{wire_code}> {{ [ {keysym} ] }};\n"));
+    for (evdev, base, shifted) in physical_keys() {
+        let xkb_code = evdev + 8;
+        keycodes.push_str(&format!("<E{evdev}> = {xkb_code};\n"));
+        let base_sym = keysym_name(base);
+        match shifted {
+            Some(shifted_key) => {
+                let shifted_sym = keysym_name(shifted_key);
+                // The explicit `type=` is load-bearing: with both ONE_LEVEL
+                // and TWO_LEVEL types declared, relying on the implicit
+                // type-from-symbol-count inference silently collapses this
+                // to one level, dropping the shifted symbol.
+                symbols.push_str(&format!(
+                    "key <E{evdev}> {{ type=\"TWO_LEVEL\", [ {base_sym}, {shifted_sym} ] }};\n"
+                ));
+            }
+            None => symbols.push_str(&format!(
+                "key <E{evdev}> {{ type=\"ONE_LEVEL\", [ {base_sym} ] }};\n"
+            )),
+        }
     }
     format!(
         "xkb_keymap {{\n\
@@ -470,6 +549,12 @@ pub fn virtual_keymap_source() -> String {
          modifiers = none;\n\
          level_name[Level1] = \"Any\";\n\
          }};\n\
+         type \"TWO_LEVEL\" {{\n\
+         modifiers = Shift;\n\
+         map[Shift] = Level2;\n\
+         level_name[Level1] = \"Base\";\n\
+         level_name[Level2] = \"Shift\";\n\
+         }};\n\
          }};\n\
          xkb_compat \"(unnamed)\" {{}};\n\
          xkb_symbols \"(unnamed)\" {{\n\
@@ -479,47 +564,98 @@ pub fn virtual_keymap_source() -> String {
     )
 }
 
-/// Every `Key` the two layouts can ever emit through [`TouchKeyboard::press`],
-/// paired with its XKB keysym name, in the fixed order used to assign wire
-/// keycodes. Derived directly from the layout functions rather than
-/// duplicated by hand, so it can't drift if a row of characters changes.
-fn key_table() -> Vec<(Key, String)> {
-    let mut table: Vec<(Key, String)> = character_set()
+/// Every physical key [`virtual_key`]/[`virtual_keymap_source`] address, as
+/// `(evdev keycode, unshifted Key, shifted Key)` — matching a real "us"
+/// keyboard's evdev keycode assignments and shift pairing exactly, which is
+/// the whole point (see [`virtual_key`]'s doc comment).
+fn physical_keys() -> Vec<(u32, Key, Option<Key>)> {
+    let digit_row: [(u32, char, Option<char>); 12] = [
+        (2, '1', Some('!')),
+        (3, '2', Some('@')),
+        (4, '3', Some('#')),
+        (5, '4', Some('$')),
+        (6, '5', Some('%')),
+        (7, '6', None), // shift-6 (^) isn't used by any layout.
+        (8, '7', Some('&')),
+        (9, '8', Some('*')),
+        (10, '9', Some('(')),
+        (11, '0', Some(')')),
+        (12, '-', Some('_')),
+        (13, '=', Some('+')),
+    ];
+    let letters: [(u32, char); 26] = [
+        (16, 'q'),
+        (17, 'w'),
+        (18, 'e'),
+        (19, 'r'),
+        (20, 't'),
+        (21, 'y'),
+        (22, 'u'),
+        (23, 'i'),
+        (24, 'o'),
+        (25, 'p'),
+        (30, 'a'),
+        (31, 's'),
+        (32, 'd'),
+        (33, 'f'),
+        (34, 'g'),
+        (35, 'h'),
+        (36, 'j'),
+        (37, 'k'),
+        (38, 'l'),
+        (44, 'z'),
+        (45, 'x'),
+        (46, 'c'),
+        (47, 'v'),
+        (48, 'b'),
+        (49, 'n'),
+        (50, 'm'),
+    ];
+
+    let mut keys: Vec<(u32, Key, Option<Key>)> = digit_row
         .into_iter()
-        .map(|character| (Key::Character(character), keysym_name(character)))
+        .map(|(evdev, base, shifted)| (evdev, Key::Character(base), shifted.map(Key::Character)))
         .collect();
-    table.push((Key::Backspace, "BackSpace".to_string()));
-    table.push((Key::Enter, "Return".to_string()));
-    table.push((Key::Space, "space".to_string()));
-    table.push((Key::Tab, "Tab".to_string()));
-    table.push((Key::Escape, "Escape".to_string()));
-    table.push((Key::ArrowUp, "Up".to_string()));
-    table.push((Key::ArrowDown, "Down".to_string()));
-    table.push((Key::ArrowLeft, "Left".to_string()));
-    table.push((Key::ArrowRight, "Right".to_string()));
-    table
+    keys.push((39, Key::Character(';'), Some(Key::Character(':'))));
+    keys.push((53, Key::Character('/'), Some(Key::Character('?'))));
+    keys.extend(letters.into_iter().map(|(evdev, letter)| {
+        (
+            evdev,
+            Key::Character(letter),
+            Some(Key::Character(letter.to_ascii_uppercase())),
+        )
+    }));
+    keys.push((1, Key::Escape, None));
+    keys.push((14, Key::Backspace, None));
+    keys.push((15, Key::Tab, None));
+    keys.push((28, Key::Enter, None));
+    keys.push((57, Key::Space, None));
+    keys.push((103, Key::ArrowUp, None));
+    keys.push((105, Key::ArrowLeft, None));
+    keys.push((106, Key::ArrowRight, None));
+    keys.push((108, Key::ArrowDown, None));
+    keys
 }
 
-fn character_set() -> std::collections::BTreeSet<char> {
-    let mut set = std::collections::BTreeSet::new();
-    for mode in [
-        KeyboardMode::Full,
-        KeyboardMode::Numeric,
-        KeyboardMode::Extended,
-    ] {
-        for page in [Page::Letters, Page::Symbols] {
-            for layout in keyboard(mode, page, false, 400.0, 4000.0) {
-                if let Key::Character(character) = layout.key {
-                    set.insert(character);
-                    set.insert(character.to_ascii_uppercase());
-                }
-            }
+fn keysym_name(key: Key) -> String {
+    match key {
+        Key::Character(character) => character_keysym_name(character),
+        Key::Backspace => "BackSpace".to_string(),
+        Key::Tab => "Tab".to_string(),
+        Key::Enter => "Return".to_string(),
+        Key::Space => "space".to_string(),
+        Key::Escape => "Escape".to_string(),
+        Key::ArrowUp => "Up".to_string(),
+        Key::ArrowDown => "Down".to_string(),
+        Key::ArrowLeft => "Left".to_string(),
+        Key::ArrowRight => "Right".to_string(),
+        Key::Shift | Key::Symbols | Key::Ctrl | Key::Alt => {
+            unreachable!("{key:?} is a modifier, never placed in the physical key table")
         }
     }
-    set
 }
 
-fn keysym_name(character: char) -> String {
+fn character_keysym_name(character: char) -> String {
     match character {
         'a'..='z' | 'A'..='Z' | '0'..='9' => character.to_string(),
         '!' => "exclam".to_string(),
@@ -609,32 +745,54 @@ mod tests {
                             && bounds.origin.y + bounds.size.height <= height,
                     _ => true,
                 }));
+
+                // No dead space above the first row: the clamps that decide
+                // row/key height and the bottom margin must be evaluated at
+                // this *real* footprint height, not at some other height,
+                // or the keys land well below y=0 with room to spare.
+                let top = commands
+                    .iter()
+                    .filter_map(|command| match command {
+                        DrawCommand::RoundedFill { bounds, .. } => Some(bounds.origin.y),
+                        _ => None,
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                assert!(
+                    top < 5.0,
+                    "{mode:?} at width {width} has {top}px of dead space above its keys \
+                     (footprint_height returned {height})"
+                );
             }
         }
     }
 
     #[test]
-    fn every_emitted_key_has_a_unique_keycode_declared_in_the_keymap() {
+    fn every_emitted_key_resolves_to_a_keycode_declared_in_the_keymap() {
         let mut full = TouchKeyboard::new(KeyboardMode::Full);
         let mut numeric = TouchKeyboard::new(KeyboardMode::Numeric);
+        let mut extended = TouchKeyboard::new(KeyboardMode::Extended);
         let mut emitted = Vec::new();
         for character in 'a'..='z' {
-            emitted.push(full.press(Key::Character(character)).unwrap());
+            emitted.push(
+                full.press_with_modifiers(Key::Character(character))
+                    .unwrap(),
+            );
         }
         for row in ["1234567890", "@#$%&*-+=", "!?_/:;()"] {
             for character in row.chars() {
-                emitted.push(full.press(Key::Character(character)).unwrap());
+                emitted.push(
+                    full.press_with_modifiers(Key::Character(character))
+                        .unwrap(),
+                );
             }
         }
-        emitted.push(full.press(Key::Backspace).unwrap());
-        emitted.push(full.press(Key::Enter).unwrap());
-        emitted.push(full.press(Key::Space).unwrap());
+        emitted.push(full.press_with_modifiers(Key::Backspace).unwrap());
+        emitted.push(full.press_with_modifiers(Key::Enter).unwrap());
+        emitted.push(full.press_with_modifiers(Key::Space).unwrap());
         // The numeric keypad emits the same logical Backspace/Enter keys,
         // so they resolve to the same keycodes already covered above.
         assert_eq!(numeric.press(Key::Backspace), Some(Key::Backspace));
         assert_eq!(numeric.press(Key::Enter), Some(Key::Enter));
-
-        let mut extended = TouchKeyboard::new(KeyboardMode::Extended);
         for key in [
             Key::Tab,
             Key::Escape,
@@ -643,28 +801,42 @@ mod tests {
             Key::ArrowLeft,
             Key::ArrowRight,
         ] {
-            emitted.push(extended.press(key).unwrap());
+            emitted.push(extended.press_with_modifiers(key).unwrap());
         }
 
-        let codes: Vec<u32> = emitted
-            .iter()
-            .map(|key| keycode_for(*key).unwrap_or_else(|| panic!("no keycode for {key:?}")))
-            .collect();
-        let unique: std::collections::BTreeSet<u32> = codes.iter().copied().collect();
-        assert_eq!(codes.len(), unique.len(), "keycodes must not collide");
-
         let keymap = virtual_keymap_source();
-        for code in &codes {
+        for (key, modifiers) in &emitted {
+            let wire = virtual_key(*key, *modifiers)
+                .unwrap_or_else(|| panic!("no virtual key for {key:?}"));
             assert!(
-                keymap.contains(&format!("<K{code}>")),
-                "keymap is missing keycode {code}"
+                keymap.contains(&format!("<E{}>", wire.keycode)),
+                "keymap is missing evdev keycode {}",
+                wire.keycode
             );
         }
 
-        assert_eq!(keycode_for(Key::Shift), None);
-        assert_eq!(keycode_for(Key::Symbols), None);
-        assert_eq!(keycode_for(Key::Ctrl), None);
-        assert_eq!(keycode_for(Key::Alt), None);
+        assert_eq!(virtual_key(Key::Shift, Modifiers::default()), None);
+        assert_eq!(virtual_key(Key::Symbols, Modifiers::default()), None);
+        assert_eq!(virtual_key(Key::Ctrl, Modifiers::default()), None);
+        assert_eq!(virtual_key(Key::Alt, Modifiers::default()), None);
+    }
+
+    #[test]
+    fn upper_and_lower_case_share_a_keycode_and_differ_only_by_shift() {
+        let lower = virtual_key(Key::Character('c'), Modifiers::default()).unwrap();
+        let upper = virtual_key(Key::Character('C'), Modifiers::default()).unwrap();
+        assert_eq!(lower.keycode, upper.keycode);
+        assert_eq!(lower.modifiers, 0);
+        assert_eq!(upper.modifiers, VirtualKey::SHIFT);
+
+        // A symbol reached directly (e.g. tapping "!" on the symbols page,
+        // not via a held Shift) still needs the real Shift bit: consumed-
+        // modifier keybinding matching in receivers depends on it.
+        let exclaim = virtual_key(Key::Character('!'), Modifiers::default()).unwrap();
+        let one = virtual_key(Key::Character('1'), Modifiers::default()).unwrap();
+        assert_eq!(exclaim.keycode, one.keycode);
+        assert_eq!(exclaim.modifiers, VirtualKey::SHIFT);
+        assert_eq!(one.modifiers, 0);
     }
 
     #[test]
@@ -677,6 +849,7 @@ mod tests {
             Some((
                 Key::Character('c'),
                 Modifiers {
+                    shift: false,
                     ctrl: true,
                     alt: false
                 }
@@ -694,6 +867,7 @@ mod tests {
             Some((
                 Key::ArrowLeft,
                 Modifiers {
+                    shift: false,
                     ctrl: false,
                     alt: true
                 }
@@ -704,5 +878,36 @@ mod tests {
         // whichever modifiers happened to apply.
         keyboard.press_with_modifiers(Key::Ctrl);
         assert_eq!(keyboard.press(Key::Tab), Some(Key::Tab));
+    }
+
+    #[test]
+    fn ctrl_shift_c_produces_a_distinct_wire_key_from_plain_ctrl_c() {
+        // TouchKeyboard's job is just resolving the tapped key and which
+        // modifiers were held (baking Shift into the character's case, like
+        // it always has); telling Ctrl+Shift+C apart from Ctrl+C on the
+        // wire is `virtual_key`'s job, since it depends on which physical
+        // key actually needs Shift — see its doc comment.
+        let mut keyboard = TouchKeyboard::new(KeyboardMode::Extended);
+
+        keyboard.press_with_modifiers(Key::Shift);
+        keyboard.press_with_modifiers(Key::Ctrl);
+        let (key, modifiers) = keyboard.press_with_modifiers(Key::Character('c')).unwrap();
+        assert_eq!(key, Key::Character('C'));
+        assert!(modifiers.ctrl);
+        let ctrl_shift_c = virtual_key(key, modifiers).unwrap();
+
+        keyboard.press_with_modifiers(Key::Ctrl);
+        let (key, modifiers) = keyboard.press_with_modifiers(Key::Character('c')).unwrap();
+        assert_eq!(key, Key::Character('c'));
+        assert!(modifiers.ctrl);
+        let ctrl_c = virtual_key(key, modifiers).unwrap();
+
+        assert_eq!(ctrl_shift_c.keycode, ctrl_c.keycode, "same physical key");
+        assert_eq!(
+            ctrl_shift_c.modifiers,
+            VirtualKey::CONTROL | VirtualKey::SHIFT
+        );
+        assert_eq!(ctrl_c.modifiers, VirtualKey::CONTROL);
+        assert_ne!(ctrl_shift_c.modifiers, ctrl_c.modifiers);
     }
 }

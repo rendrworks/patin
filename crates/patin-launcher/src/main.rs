@@ -3,7 +3,7 @@ mod ui;
 
 use std::process::ExitCode;
 
-use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel};
+use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel, LayerVisibility};
 
 fn main() -> ExitCode {
     let applications = apps::discover();
@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         size: (0, 0),
         exclusive_zone: 0,
         keyboard: KeyboardPolicy::None,
+        visibility: LayerVisibility::Fixed,
     };
     match patin::platform::run(config, ui::Launcher::new(applications)) {
         Ok(()) => ExitCode::SUCCESS,

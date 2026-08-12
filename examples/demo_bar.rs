@@ -18,6 +18,7 @@ fn main() -> ExitCode {
         size: (0, 32),
         exclusive_zone: 32,
         keyboard: patin::platform::KeyboardPolicy::None,
+        visibility: patin::platform::LayerVisibility::Fixed,
     };
     match patin::platform::run(config, scene::DemoBar::new()) {
         Ok(()) => ExitCode::SUCCESS,

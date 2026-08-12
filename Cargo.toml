@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+calloop = { version = "=0.14.4", default-features = false, features = ["signals"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 cosmic-text = { version = "=0.19.0", default-features = false, features = ["fontconfig", "std", "swash"] }
 rustix = { version = "=1.1.4", default-features = false, features = ["std", "fs"] }
