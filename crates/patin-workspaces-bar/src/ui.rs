@@ -7,7 +7,7 @@ use patin::{
 };
 use patin_service_workspaces::{WorkspacesProvider, WorkspacesSnapshot};
 
-pub const BAR_HEIGHT: f32 = 28.0;
+pub const BAR_HEIGHT: f32 = PILL_HEIGHT + 4.0;
 const PILL_WIDTH: f32 = 32.0;
 const PILL_HEIGHT: f32 = 10.0;
 const GAP: f32 = 12.0;

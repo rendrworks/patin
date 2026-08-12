@@ -425,10 +425,13 @@ fn extra_keys_row(width: f32, top: f32, row_height: f32) -> Vec<KeyLayout> {
 
 fn bottom_margin(height: f32) -> f32 {
     // The lower bound only ever binds for a compact, already-docked-at-the-
-    // bottom-edge surface (a full screen's height*0.11 always lands well
-    // above it) — there's no other content below to keep clear of there,
-    // just a small touch-safety gap, not a full gesture-nav reservation.
-    (height * 0.11).clamp(8.0, 112.0)
+    // bottom-edge surface — there's no other content below to keep clear of
+    // there, just a small touch-safety gap, not a full gesture-nav
+    // reservation. A docked deployment (e.g. patin-osk under 0xin) sits
+    // above patin-workspaces-bar's own reserved strip rather than the true
+    // screen edge, so that strip already provides real separation and this
+    // only needs to be a thin touch-safety pad.
+    (height * 0.06).clamp(8.0, 40.0)
 }
 
 fn key_colors(key: Key, armed: bool, disabled: bool) -> (Color, Color) {
