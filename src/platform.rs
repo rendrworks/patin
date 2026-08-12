@@ -353,6 +353,7 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
         exit: false,
         hidden: initial_hidden,
         configured_exclusive_zone,
+        pending_visibility_change: false,
     };
 
     event_loop.handle().insert_source(
@@ -371,12 +372,11 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
 
     if signal_toggle_enabled {
         let signals = Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2])?;
-        let toggle_queue_handle = queue_handle.clone();
         event_loop
             .handle()
-            .insert_source(signals, move |event, _, patin| match event.signal() {
-                Signal::SIGUSR1 => patin.set_hidden(true, &toggle_queue_handle),
-                Signal::SIGUSR2 => patin.set_hidden(false, &toggle_queue_handle),
+            .insert_source(signals, |event, _, patin| match event.signal() {
+                Signal::SIGUSR1 => patin.set_hidden(true),
+                Signal::SIGUSR2 => patin.set_hidden(false),
                 _ => {}
             })?;
     }
@@ -430,6 +430,11 @@ struct Patin {
     /// hidden the layer surface's exclusive zone is dropped to 0 so other
     /// windows reclaim the space, matching wvkbd's hide behavior.
     configured_exclusive_zone: i32,
+    /// Set by `set_hidden` once it has committed an exclusive-zone change;
+    /// cleared by the next `configure`, which is where the matching buffer
+    /// transition (attach/detach) actually happens — never in the same
+    /// commit as the zone change itself.
+    pending_visibility_change: bool,
 }
 
 struct ActiveTouch {
@@ -569,7 +574,18 @@ impl Patin {
     /// restores both (`!hidden`). Only meaningful for a layer surface built
     /// with `LayerVisibility::ToggleBySignal`; a no-op otherwise since
     /// `hidden` never becomes true for any other surface.
-    fn set_hidden(&mut self, hidden: bool, queue_handle: &QueueHandle<Self>) {
+    ///
+    /// Only commits the exclusive-zone change here — changing it is a
+    /// layout-affecting request, so per the compositor round-trip every
+    /// other layer-shell request implicitly relies on (attach a new buffer
+    /// only after that state has been configure-acked), the actual buffer
+    /// transition (attach/detach) happens later, from `configure`, once the
+    /// compositor's resulting reconfigure has actually arrived. Bundling
+    /// both into one commit is what a fresh surface's mandatory "no buffer
+    /// on the first commit" rule prevents by construction; reusing an
+    /// already-mapped surface has no such guard rail, so it has to be done
+    /// by hand here.
+    fn set_hidden(&mut self, hidden: bool) {
         if self.hidden == hidden {
             return;
         }
@@ -580,16 +596,9 @@ impl Patin {
             } else {
                 self.configured_exclusive_zone
             });
+            layer.commit();
         }
-        if hidden {
-            let surface = self.role.wl_surface();
-            surface.attach(None, 0, 0);
-            surface.commit();
-            self.redraw_requested = false;
-            self.frame_pending = false;
-        } else {
-            self.request_redraw(queue_handle);
-        }
+        self.pending_visibility_change = true;
     }
 
     fn scroll_by(&mut self, queue_handle: &QueueHandle<Self>, delta_y: f64) {
@@ -709,6 +718,22 @@ impl LayerShellHandler for Patin {
                 height: size.1 as f32,
             });
             self.request_redraw(queue_handle);
+        }
+
+        // The compositor's round-trip acknowledgment of a `set_hidden`
+        // exclusive-zone change — only now is it safe to touch the buffer,
+        // never in the same commit as the zone change that prompted this.
+        if self.pending_visibility_change {
+            self.pending_visibility_change = false;
+            if self.hidden {
+                let surface = self.role.wl_surface();
+                surface.attach(None, 0, 0);
+                surface.commit();
+                self.redraw_requested = false;
+                self.frame_pending = false;
+            } else {
+                self.request_redraw(queue_handle);
+            }
         }
     }
 }
