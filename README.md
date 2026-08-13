@@ -50,6 +50,9 @@ itself; `crates/` holds optional, opt-in support and composition crates:
   the reference consumer of 0xin's `workspaces` control-socket query.
 - `patin-lock` — an `ext-session-lock-v1` client with physical and touch
   keyboards and PAM authentication.
+- `patin-login` — a touch-friendly greetd greeter: the login counterpart to
+  `patin-lock`, but an ordinary layer-shell client, since greetd owns the
+  authentication.
 - `patin-session` — a compact, compositor-neutral session action menu.
 
 A consumer depends on `patin` alone, or additionally on whichever adapter
@@ -245,6 +248,45 @@ this explicitly to keep its keybinds from bypassing the lock), so
 itself. `SIGUSR1` sent to the `--worker` process does the same toggle and
 remains useful for scripted testing (e.g. over SSH), but isn't required for
 the physical button to work.
+
+### Install and run the greeter
+
+`patin-login` is the login-time counterpart to the lock screen, but a much
+smaller thing: greetd owns the PAM conversation and the privileges, so the
+greeter is an ordinary layer-shell client that relays a username and password
+over `$GREETD_SOCK` and asks greetd to start the session. It needs no PAM
+policy and no elevated rights of its own.
+
+```sh
+./scripts/install-login-user.sh
+
+# Preview the UI inside your current session — no greetd required.
+patin-login
+```
+
+Without `$GREETD_SOCK` it starts in preview mode: the greeter renders and
+accepts input, but reports sign-in as unavailable instead of pretending to
+authenticate. That is the safe way to check appearance and touch targets
+before putting it in the boot path.
+
+Making it the real greeter is a separate, deliberate step, because a greeter
+that fails to start means no graphical login. Keep the previous configuration
+until this one is proven, and keep a way in (SSH, or a text VT):
+
+```sh
+sudo install -m 0755 data/greetd/patin-login-session.sh \
+    /usr/local/bin/patin-login-session
+sudo cp /etc/greetd/config.toml /etc/greetd/config.toml.backup
+sudo install -m 0644 data/greetd/config.toml.example /etc/greetd/config.toml
+```
+
+The session script starts a compositor whose only client is the greeter;
+`PATIN_LOGIN_COMPOSITOR` selects that compositor and `PATIN_LOGIN_SESSION` the
+command greetd runs on success (both default to `0xin`). `--user=` preselects
+an account, otherwise the first ordinary login account in `/etc/passwd` is
+offered; `--keypad=` takes the same `numeric`/`full`/`extended` values the lock
+screen and on-screen keyboard use. Tap either field, or press Tab, to move
+between username and password.
 
 ### Run on the FP5
 

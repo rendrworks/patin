@@ -1,0 +1,12 @@
+# greetd configuration that uses Patin's greeter instead of phrog/phoc.
+#
+# Keep the previous config until the greeter has been verified: a greeter that
+# fails to start means no graphical login. `vt` must match the greeter VT the
+# distribution already uses.
+
+[terminal]
+vt = 7
+
+[default_session]
+command = "/usr/local/bin/patin-login-session"
+user = "greetd"

@@ -12,6 +12,7 @@
 //! `patin-lock`'s `auth` module uses.
 
 use std::env;
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::Sender;
@@ -93,15 +94,24 @@ pub fn sign_in(
         return;
     }
     std::thread::spawn(move || {
-        let _ = sender.send(match attempt(&username, &password, &command) {
+        let result = match env::var_os("GREETD_SOCK") {
+            Some(socket) => attempt(&socket, &username, &password, &command),
+            None => Err("GREETD_SOCK is not set".to_string()),
+        };
+        let _ = sender.send(match result {
             Ok(()) => LoginResult::Success,
             Err(message) => LoginResult::Failure(message),
         });
     });
 }
 
-fn attempt(username: &str, password: &str, command: &[String]) -> Result<(), String> {
-    let mut session = Connection::open()?;
+fn attempt(
+    socket: &OsStr,
+    username: &str,
+    password: &str,
+    command: &[String],
+) -> Result<(), String> {
+    let mut session = Connection::open(socket)?;
     let mut response = session.request(&Request::CreateSession {
         username: username.to_string(),
     })?;
@@ -165,10 +175,9 @@ struct Connection {
 }
 
 impl Connection {
-    fn open() -> Result<Self, String> {
-        let path = env::var_os("GREETD_SOCK").ok_or("GREETD_SOCK is not set")?;
-        let stream = UnixStream::connect(&path)
-            .map_err(|error| format!("cannot reach greetd: {error}"))?;
+    fn open(socket: &OsStr) -> Result<Self, String> {
+        let stream =
+            UnixStream::connect(socket).map_err(|error| format!("cannot reach greetd: {error}"))?;
         Ok(Self { stream })
     }
 
@@ -195,7 +204,102 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, Response, friendly_error};
+    use super::{Request, Response, attempt, friendly_error};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+
+    /// A stub greetd that replies with `script` in order, recording every
+    /// request it received. Enough to drive the client through a full
+    /// conversation without a real greetd or PAM.
+    fn stub_greetd(script: Vec<String>) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
+        let path = std::env::temp_dir().join(format!(
+            "patin-login-test-{}-{:?}.sock",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::remove_file(&path).ok();
+        let listener = UnixListener::bind(&path).expect("bind stub greetd socket");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("greeter connects");
+            let mut seen = Vec::new();
+            for reply in script {
+                let mut header = [0u8; 4];
+                if stream.read_exact(&mut header).is_err() {
+                    break;
+                }
+                let mut body = vec![0u8; u32::from_ne_bytes(header) as usize];
+                stream.read_exact(&mut body).expect("read request body");
+                seen.push(String::from_utf8(body).expect("utf-8 request"));
+
+                let payload = reply.into_bytes();
+                stream
+                    .write_all(&(payload.len() as u32).to_ne_bytes())
+                    .and_then(|()| stream.write_all(&payload))
+                    .expect("write reply");
+            }
+            seen
+        });
+        (path, handle)
+    }
+
+    #[test]
+    fn a_successful_sign_in_walks_the_whole_conversation() {
+        let (path, server) = stub_greetd(vec![
+            r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#
+                .into(),
+            r#"{"type":"success"}"#.into(),
+            r#"{"type":"success"}"#.into(),
+        ]);
+
+        let result = attempt(
+            path.as_os_str(),
+            "sn3rt",
+            "hunter2",
+            &["0xin".to_string()],
+        );
+        let requests = server.join().expect("stub greetd finishes");
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].contains(r#""type":"create_session""#));
+        assert!(requests[0].contains(r#""username":"sn3rt""#));
+        // The password only ever answers the secret prompt.
+        assert!(requests[1].contains(r#""type":"post_auth_message_response""#));
+        assert!(requests[1].contains(r#""response":"hunter2""#));
+        assert!(requests[2].contains(r#""type":"start_session""#));
+        assert!(requests[2].contains(r#""cmd":["0xin"]"#));
+    }
+
+    #[test]
+    fn a_rejected_password_reports_failure_and_cancels_the_session() {
+        let (path, server) = stub_greetd(vec![
+            r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#
+                .into(),
+            r#"{"type":"error","error_type":"auth_error","description":"pam_authenticate: AUTH_ERR"}"#
+                .into(),
+            r#"{"type":"success"}"#.into(),
+        ]);
+
+        let result = attempt(path.as_os_str(), "sn3rt", "wrong", &["0xin".to_string()]);
+        let requests = server.join().expect("stub greetd finishes");
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(result, Err("Authentication failed".into()));
+        // Never starts a session, and cleans up so the next attempt can begin.
+        assert!(requests.iter().all(|request| !request.contains("start_session")));
+        assert!(requests[2].contains(r#""type":"cancel_session""#));
+    }
+
+    #[test]
+    fn an_unreachable_socket_is_reported_rather_than_panicking() {
+        let missing = std::env::temp_dir().join("patin-login-does-not-exist.sock");
+        let result = attempt(missing.as_os_str(), "sn3rt", "x", &["0xin".to_string()]);
+        assert!(
+            result.unwrap_err().starts_with("cannot reach greetd"),
+            "expected a connection error"
+        );
+    }
 
     #[test]
     fn requests_serialize_to_greetds_tagged_shape() {
