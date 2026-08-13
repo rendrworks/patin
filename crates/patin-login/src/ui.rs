@@ -19,6 +19,7 @@ const MAX_PASSWORD_BYTES: usize = 256;
 const FIELD_HEIGHT: f32 = 52.0;
 const FIELD_GAP: f32 = 12.0;
 const FIELD_RADIUS: f32 = 14.0;
+const SESSION_ROW_HEIGHT: f32 = 38.0;
 
 const BACKGROUND: Color = Color(11, 15, 24, 255);
 const FIELD_FILL: Color = Color(20, 27, 38, 255);
@@ -43,11 +44,22 @@ pub struct LoginUi {
     pub verifying: bool,
     pub message: String,
     hostname: String,
+    /// The session that will be started, and whether there is more than one
+    /// to choose from — with a single session the row is not worth the space
+    /// or the accidental taps.
+    session: String,
+    selectable: bool,
     keyboard: TouchKeyboard,
 }
 
 impl LoginUi {
-    pub fn new(mode: KeyboardMode, username: String, hostname: String) -> Self {
+    pub fn new(
+        mode: KeyboardMode,
+        username: String,
+        hostname: String,
+        session: String,
+        selectable: bool,
+    ) -> Self {
         // A known user starts on the password field — the common case is
         // "this is my phone, let me in", not "pick an account".
         let focus = if username.is_empty() {
@@ -62,8 +74,20 @@ impl LoginUi {
             verifying: false,
             message: String::new(),
             hostname,
+            session,
+            selectable,
             keyboard: TouchKeyboard::new(mode),
         }
+    }
+
+    /// Show a different session as the selected one.
+    pub fn set_session(&mut self, session: String) {
+        self.session = session;
+    }
+
+    /// Whether `position` hits the session row, so a tap can cycle it.
+    pub fn session_at(&self, width: f32, height: f32, position: (f64, f64)) -> bool {
+        self.selectable && !self.verifying && session_row(width, height).contains(position)
     }
 
     pub fn press(&mut self, key: Key) -> bool {
@@ -187,6 +211,16 @@ impl LoginUi {
             ),
         ];
 
+        if self.selectable {
+            let row = session_row(width, height);
+            commands.push(rounded_fill(row, FIELD_FILL, FIELD_RADIUS));
+            commands.push(text(
+                row.inset(6.0),
+                &format!("Session: {}  ›", self.session),
+                15.0,
+                TEXT_MUTED,
+            ));
+        }
         commands.extend(self.field(username_bounds, Field::Username));
         commands.extend(self.field(password_bounds, Field::Password));
         commands.push(text(
@@ -243,12 +277,23 @@ impl LoginUi {
     }
 }
 
+/// The session row, directly above the fields.
+fn session_row(width: f32, height: f32) -> Rect {
+    let (username, _) = fields(width, height);
+    Rect::new(
+        username.origin.x,
+        username.origin.y - SESSION_ROW_HEIGHT - FIELD_GAP,
+        username.size.width,
+        SESSION_ROW_HEIGHT,
+    )
+}
+
 /// The two field rects, shared by drawing and hit-testing so a tap can never
 /// disagree with what is on screen.
 fn fields(width: f32, height: f32) -> (Rect, Rect) {
     let content_width = (width - 32.0).clamp(0.0, 440.0);
     let content_x = (width - content_width) / 2.0;
-    let top = height * 0.24;
+    let top = height * 0.26;
     (
         Rect::new(content_x, top, content_width, FIELD_HEIGHT),
         Rect::new(
@@ -291,7 +336,13 @@ mod tests {
     use patin::ui::DrawCommand;
 
     fn ui() -> LoginUi {
-        LoginUi::new(KeyboardMode::Full, "sn3rt".into(), "fp5".into())
+        LoginUi::new(
+            KeyboardMode::Full,
+            "sn3rt".into(),
+            "fp5".into(),
+            "0xin Touch Test".into(),
+            true,
+        )
     }
 
     fn text_values(ui: &LoginUi) -> Vec<String> {
@@ -307,7 +358,13 @@ mod tests {
     #[test]
     fn a_known_user_starts_on_the_password_field() {
         assert_eq!(ui().focus, Field::Password);
-        let empty = LoginUi::new(KeyboardMode::Full, String::new(), "fp5".into());
+        let empty = LoginUi::new(
+            KeyboardMode::Full,
+            String::new(),
+            "fp5".into(),
+            "0xin Touch Test".into(),
+            true,
+        );
         assert_eq!(empty.focus, Field::Username);
     }
 
@@ -350,7 +407,13 @@ mod tests {
 
     #[test]
     fn an_empty_field_blocks_submission() {
-        let mut ui = LoginUi::new(KeyboardMode::Full, String::new(), "fp5".into());
+        let mut ui = LoginUi::new(
+            KeyboardMode::Full,
+            String::new(),
+            "fp5".into(),
+            "0xin Touch Test".into(),
+            true,
+        );
         ui.press(Key::Character('s'));
         assert!(ui.take_credentials().is_none(), "username still empty");
     }
@@ -391,10 +454,57 @@ mod tests {
     }
 
     #[test]
+    fn the_session_row_is_tappable_only_when_there_is_a_choice() {
+        let width = 500.0;
+        let height = 1000.0;
+        let row = super::session_row(width, height);
+        let centre = (
+            f64::from(row.origin.x + row.size.width / 2.0),
+            f64::from(row.origin.y + row.size.height / 2.0),
+        );
+
+        let ui = ui();
+        assert!(ui.session_at(width, height, centre));
+        assert!(!ui.session_at(width, height, (5.0, 5.0)));
+        assert!(
+            text_values(&ui)
+                .iter()
+                .any(|value| value.contains("0xin Touch Test")),
+            "the selected session is shown"
+        );
+
+        // A single session is not a choice, so the row is neither drawn nor
+        // tappable — and it must not swallow taps meant for the fields.
+        let single = LoginUi::new(
+            KeyboardMode::Full,
+            "sn3rt".into(),
+            "fp5".into(),
+            "Only".into(),
+            false,
+        );
+        assert!(!single.session_at(width, height, centre));
+        assert!(!text_values(&single).iter().any(|value| value.contains("Only")));
+    }
+
+    #[test]
+    fn the_session_row_never_overlaps_the_fields() {
+        let (username, _) = fields(500.0, 1000.0);
+        let row = super::session_row(500.0, 1000.0);
+        assert!(row.origin.y + row.size.height <= username.origin.y);
+        assert!(row.origin.y > 0.0);
+    }
+
+    #[test]
     fn fields_stay_clear_of_the_keypad() {
         let (_, password) = fields(500.0, 1000.0);
         let message_bottom = password.origin.y + password.size.height + 46.0;
-        let keypad_top = LoginUi::new(KeyboardMode::Full, "u".into(), "h".into())
+        let keypad_top = LoginUi::new(
+            KeyboardMode::Full,
+            "u".into(),
+            "h".into(),
+            "s".into(),
+            true,
+        )
             .commands(500.0, 1000.0)
             .into_iter()
             .filter_map(|command| match command {

@@ -9,6 +9,7 @@
 //! of driving the Wayland queue by hand.
 
 mod greetd;
+mod sessions;
 mod ui;
 
 use std::process::ExitCode;
@@ -23,6 +24,7 @@ use patin::{
 };
 
 use greetd::{Backend, LoginResult};
+use sessions::Session;
 use ui::{Key, KeyboardMode, LoginUi};
 
 /// The session greetd starts once the credentials are accepted.
@@ -66,7 +68,8 @@ fn main() -> ExitCode {
 struct Greeter {
     ui: LoginUi,
     backend: Backend,
-    command: Vec<String>,
+    sessions: Vec<Session>,
+    selected: usize,
     results: Receiver<LoginResult>,
     result_sender: Sender<LoginResult>,
     size: Size,
@@ -77,10 +80,23 @@ struct Greeter {
 impl Greeter {
     fn new(backend: Backend) -> Self {
         let (result_sender, results) = channel();
+        let sessions = sessions::discover(&session_command());
+        let selected = 0;
+        let name = sessions
+            .get(selected)
+            .map(|session| session.name.clone())
+            .unwrap_or_default();
         Self {
-            ui: LoginUi::new(keyboard_mode_from_args(), default_username(), hostname()),
+            ui: LoginUi::new(
+                keyboard_mode_from_args(),
+                default_username(),
+                hostname(),
+                name,
+                sessions.len() > 1,
+            ),
             backend,
-            command: session_command(),
+            sessions,
+            selected,
             results,
             result_sender,
             size: Size::default(),
@@ -104,15 +120,31 @@ impl Greeter {
         let Some((username, password)) = self.ui.take_credentials() else {
             return false;
         };
+        let command = self
+            .sessions
+            .get(self.selected)
+            .map(|session| session.command.clone())
+            .unwrap_or_else(session_command);
         greetd::sign_in(
             &self.backend,
             username,
             password,
-            self.command.clone(),
+            command,
             self.result_sender.clone(),
         );
         self.damage_all();
         true
+    }
+
+    /// Move to the next advertised session. Cycling suits a handful of
+    /// entries and needs no second surface to pick from.
+    fn cycle_session(&mut self) {
+        if self.sessions.len() < 2 {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.sessions.len();
+        self.ui.set_session(self.sessions[self.selected].name.clone());
+        self.damage_all();
     }
 
     fn damage_all(&mut self) {
@@ -152,6 +184,10 @@ impl Shell for Greeter {
     }
 
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
+        if self.ui.session_at(self.size.width, self.size.height, position) {
+            self.cycle_session();
+            return true;
+        }
         if let Some(field) = self.ui.field_at(self.size.width, self.size.height, position) {
             if self.ui.focus != field {
                 self.ui.focus = field;
