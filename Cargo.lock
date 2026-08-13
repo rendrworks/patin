@@ -1020,6 +1020,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "patin-login"
+version = "0.1.0"
+dependencies = [
+ "patin",
+ "patin-keyboard",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
 name = "patin-network-settings"
 version = "0.1.0"
 dependencies = [

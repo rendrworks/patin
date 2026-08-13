@@ -27,6 +27,7 @@ members = [
     "crates/patin-keyboard",
     "crates/patin-launcher",
     "crates/patin-lock",
+    "crates/patin-login",
     "crates/patin-network-settings",
     "crates/patin-osk",
     "crates/patin-session",
