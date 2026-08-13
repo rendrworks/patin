@@ -23,7 +23,11 @@ set -eu
 # What greetd execs once the credentials are accepted.
 : "${PATIN_LOGIN_SESSION:=0xin}"
 
-export OXIN_CONFIG PATIN_LOGIN_SESSION
+# Where the last username/session choice is remembered. Set explicitly because
+# a greeter session cannot rely on HOME being set for the greeter user.
+: "${PATIN_LOGIN_STATE:=/var/lib/greetd/patin-login-last-session}"
+
+export OXIN_CONFIG PATIN_LOGIN_SESSION PATIN_LOGIN_STATE
 
 # A greetd session starts without a parent Wayland display; clear any stale
 # inherited values so wlroots must choose DRM + libinput.

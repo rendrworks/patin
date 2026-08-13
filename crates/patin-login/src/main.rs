@@ -10,6 +10,7 @@
 
 mod greetd;
 mod sessions;
+mod state;
 mod ui;
 
 use std::process::ExitCode;
@@ -81,15 +82,27 @@ impl Greeter {
     fn new(backend: Backend) -> Self {
         let (result_sender, results) = channel();
         let sessions = sessions::discover(&session_command());
-        let selected = 0;
+        let remembered = state::load();
+        // Whatever was used last, if it is still on offer; otherwise the
+        // first, so a removed session degrades to a sensible default rather
+        // than an empty selection.
+        let selected = remembered
+            .session
+            .as_deref()
+            .and_then(|name| sessions.iter().position(|session| session.name == name))
+            .unwrap_or(0);
         let name = sessions
             .get(selected)
             .map(|session| session.name.clone())
             .unwrap_or_default();
+        // An explicit --user= or PATIN_LOGIN_USER still wins over memory.
+        let username = requested_username()
+            .or(remembered.username)
+            .unwrap_or_else(default_username);
         Self {
             ui: LoginUi::new(
                 keyboard_mode_from_args(),
-                default_username(),
+                username,
                 hostname(),
                 name,
                 sessions.len() > 1,
@@ -120,11 +133,13 @@ impl Greeter {
         let Some((username, password)) = self.ui.take_credentials() else {
             return false;
         };
-        let command = self
-            .sessions
-            .get(self.selected)
+        let chosen = self.sessions.get(self.selected);
+        let command = chosen
             .map(|session| session.command.clone())
             .unwrap_or_else(session_command);
+        if let Some(session) = chosen {
+            state::save(&username, &session.name);
+        }
         greetd::sign_in(
             &self.backend,
             username,
@@ -269,11 +284,16 @@ fn session_command() -> Vec<String> {
     }
 }
 
-fn default_username() -> String {
+/// An operator-specified account, which overrides both memory and detection.
+fn requested_username() -> Option<String> {
     std::env::args()
         .find_map(|argument| argument.strip_prefix("--user=").map(str::to_string))
         .or_else(|| std::env::var("PATIN_LOGIN_USER").ok())
-        .or_else(|| first_login_account(&std::fs::read_to_string("/etc/passwd").unwrap_or_default()))
+        .filter(|username| !username.is_empty())
+}
+
+fn default_username() -> String {
+    first_login_account(&std::fs::read_to_string("/etc/passwd").unwrap_or_default())
         .unwrap_or_default()
 }
 
