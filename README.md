@@ -177,13 +177,15 @@ Cancel row:
 ./scripts/install-session-user.sh
 PATIN_SESSION_LOGOUT_PROGRAM="$HOME/.local/bin/0xinctl" \
 PATIN_SESSION_LOGOUT_ARGUMENT=quit \
-PATIN_SESSION_LOGOUT_LABEL="Log out to Phrog" \
 patin-session
 ```
 
 Reboot and power-off use `systemctl` directly. Logout is optional and supplied
 by the shell integration through environment variables, so the Patin binary
-does not depend on 0xin. The phone's existing `0xin-session-menu` wrapper can
+does not depend on 0xin. The row is labelled `Log out`; set
+`PATIN_SESSION_LOGOUT_LABEL` only when a shell wants to name where logging out
+lands — worth avoiding unless that destination is genuinely fixed, since a
+greeter can be swapped without the menu noticing. The phone's existing `0xin-session-menu` wrapper can
 export those three variables and `exec patin-session`, leaving its 2-second
 power-button mapping unchanged.
 
