@@ -11,6 +11,7 @@
 mod greetd;
 mod sessions;
 mod state;
+mod status;
 mod ui;
 
 use std::process::ExitCode;
@@ -26,6 +27,7 @@ use patin::{
 
 use greetd::{Backend, LoginResult};
 use sessions::Session;
+use status::Status;
 use ui::{Key, KeyboardMode, LoginUi};
 
 /// The session greetd starts once the credentials are accepted.
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
 
 struct Greeter {
     ui: LoginUi,
+    status: Status,
     backend: Backend,
     sessions: Vec<Session>,
     selected: usize,
@@ -107,6 +110,7 @@ impl Greeter {
                 name,
                 sessions.len() > 1,
             ),
+            status: Status::new(),
             backend,
             sessions,
             selected,
@@ -182,7 +186,7 @@ impl Shell for Greeter {
     }
 
     fn update(&mut self) -> bool {
-        let mut changed = false;
+        let mut changed = self.status.update();
         while let Ok(result) = self.results.try_recv() {
             match result {
                 // greetd is starting the session and will tear this greeter
@@ -242,7 +246,11 @@ impl Shell for Greeter {
     }
 
     fn commands(&self) -> Vec<DrawCommand> {
-        self.ui.commands(self.size.width, self.size.height)
+        // The strip draws over the greeter's own background fill, so it has
+        // to come second.
+        let mut commands = self.ui.commands(self.size.width, self.size.height);
+        commands.extend(self.status.commands(self.size.width));
+        commands
     }
 
     fn take_damage(&mut self) -> Vec<Rect> {

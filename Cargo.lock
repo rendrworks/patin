@@ -1023,8 +1023,12 @@ dependencies = [
 name = "patin-login"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "patin",
+ "patin-icons",
  "patin-keyboard",
+ "patin-service-network",
+ "patin-service-upower",
  "serde",
  "serde_json",
  "zeroize",

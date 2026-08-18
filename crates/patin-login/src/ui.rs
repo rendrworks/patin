@@ -21,14 +21,14 @@ const FIELD_GAP: f32 = 12.0;
 const FIELD_RADIUS: f32 = 14.0;
 const SESSION_ROW_HEIGHT: f32 = 38.0;
 
-const BACKGROUND: Color = Color(11, 15, 24, 255);
+pub(crate) const BACKGROUND: Color = Color(11, 15, 24, 255);
 const FIELD_FILL: Color = Color(20, 27, 38, 255);
 const ACCENT: Color = Color(44, 116, 126, 255);
-const ACCENT_FOCUSED: Color = Color(82, 196, 186, 255);
-const TEXT_BRIGHT: Color = Color(236, 244, 248, 255);
-const TEXT_MUTED: Color = Color(132, 152, 168, 255);
+pub(crate) const ACCENT_FOCUSED: Color = Color(82, 196, 186, 255);
+pub(crate) const TEXT_BRIGHT: Color = Color(236, 244, 248, 255);
+pub(crate) const TEXT_MUTED: Color = Color(132, 152, 168, 255);
 const TEXT_PENDING: Color = Color(190, 206, 218, 255);
-const TEXT_ERROR: Color = Color(232, 150, 177, 255);
+pub(crate) const TEXT_ERROR: Color = Color(232, 150, 177, 255);
 
 /// Which field the keypad is typing into.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,19 +192,20 @@ impl LoginUi {
 
     pub fn commands(&self, width: f32, height: f32) -> Vec<DrawCommand> {
         let (username_bounds, password_bounds) = fields(width, height);
+        let header_top = header_top(height);
         let content_x = username_bounds.origin.x;
         let content_width = username_bounds.size.width;
 
         let mut commands = vec![
             fill(Rect::new(0.0, 0.0, width, height), BACKGROUND),
             text(
-                Rect::new(0.0, height * 0.10, width, 40.0),
+                Rect::new(0.0, header_top, width, 40.0),
                 &self.hostname,
                 26.0,
                 TEXT_BRIGHT,
             ),
             text(
-                Rect::new(0.0, height * 0.10 + 38.0, width, 28.0),
+                Rect::new(0.0, header_top + 38.0, width, 28.0),
                 "Sign in to continue",
                 15.0,
                 TEXT_MUTED,
@@ -275,6 +276,11 @@ impl LoginUi {
             "•".repeat(self.password.chars().count())
         }
     }
+}
+
+/// The hostname header, kept clear of the status strip on short screens.
+fn header_top(height: f32) -> f32 {
+    (height * 0.10).max(crate::status::STRIP_BOTTOM + 10.0)
 }
 
 /// The session row, directly above the fields.
@@ -484,6 +490,16 @@ mod tests {
         );
         assert!(!single.session_at(width, height, centre));
         assert!(!text_values(&single).iter().any(|value| value.contains("Only")));
+    }
+
+    #[test]
+    fn the_header_never_collides_with_the_status_strip() {
+        for height in [360.0, 780.0, 1000.0, 2340.0] {
+            assert!(
+                super::header_top(height) >= crate::status::STRIP_BOTTOM,
+                "header overlaps the strip at height {height}"
+            );
+        }
     }
 
     #[test]
