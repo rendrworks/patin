@@ -9,3 +9,4 @@ publish.workspace = true
 
 [dependencies]
 patin = { path = "../.." }
+patin-icons = { path = "../patin-icons" }

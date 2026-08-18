@@ -236,6 +236,154 @@ pub fn wired(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
     ]
 }
 
+/// The power symbol: a broken ring with an upright stem through the gap.
+///
+/// Session actions are drawn here rather than looked up in an icon theme so
+/// they cannot go missing, and so they take the same [`IconPalette`] as the
+/// status icons. Every shape is a rect or a rounded rect, which is all
+/// `DrawCommand` offers — the ring is a disc with the background punched out
+/// of its middle, and the gap is a second background cut across the top.
+pub fn power(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
+    let icon = centered(bounds, 18.0, 18.0);
+    let mut commands = ring(icon, 16.0, 2.2, palette.foreground, palette.background);
+    let centre_x = icon.origin.x + icon.size.width / 2.0;
+    // Punch the gap, then lay the stem through it.
+    commands.push(fill(
+        Rect::new(centre_x - 2.4, icon.origin.y - 1.0, 4.8, 6.0),
+        palette.background,
+    ));
+    commands.push(rounded(
+        Rect::new(centre_x - 1.1, icon.origin.y + 1.0, 2.2, 7.5),
+        palette.foreground,
+        1.1,
+    ));
+    commands
+}
+
+/// A ring broken at the top with an arrowhead flaring off it: reboot.
+///
+/// The head points up, across the stroke rather than along it — capping a
+/// horizontal stroke with a perpendicular head is what makes it read as an
+/// arrow instead of a thicker line.
+pub fn reboot(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
+    let icon = centered(bounds, 18.0, 18.0);
+    let mut commands = ring(icon, 15.0, 2.2, palette.foreground, palette.background);
+    let centre_x = icon.origin.x + icon.size.width / 2.0;
+    // Break the ring just past twelve o'clock, then stand the head on the
+    // end of the remaining stroke.
+    commands.push(fill(
+        Rect::new(centre_x + 2.2, icon.origin.y + 0.4, 6.5, 4.2),
+        palette.background,
+    ));
+    // Narrow enough that its base is close to the stroke it grows out of; a
+    // much wider base just reads as a lump on the ring.
+    commands.extend(arrowhead_up(
+        centre_x + 2.6,
+        icon.origin.y - 0.8,
+        2.7,
+        5.2,
+        palette.foreground,
+    ));
+    commands
+}
+
+/// A door standing open with an arrow leaving through it: log out.
+pub fn logout(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
+    let icon = centered(bounds, 18.0, 18.0);
+    let (x, y) = (icon.origin.x, icon.origin.y);
+    let door_width = 8.5;
+    let thickness = 2.0;
+    let middle = y + 9.0;
+    let mut commands = vec![
+        // Three sides only: the open side is where the arrow leaves.
+        fill(Rect::new(x, y + 1.0, thickness, 16.0), palette.foreground),
+        fill(Rect::new(x, y + 1.0, door_width, thickness), palette.foreground),
+        fill(
+            Rect::new(x, y + 15.0, door_width, thickness),
+            palette.foreground,
+        ),
+        // The shaft, level with the middle of the door.
+        fill(
+            Rect::new(x + 5.5, middle - 1.0, 7.5, thickness),
+            palette.foreground,
+        ),
+    ];
+    commands.extend(arrowhead_right(x + 17.5, middle, 3.6, 5.0, palette.foreground));
+    commands
+}
+
+/// A triangle pointing up, stacked out of rects for the same reason
+/// [`arrowhead_right`] is.
+fn arrowhead_up(
+    centre_x: f32,
+    tip_y: f32,
+    half_width: f32,
+    height: f32,
+    color: Color,
+) -> Vec<DrawCommand> {
+    const STEPS: usize = 7;
+    let step_height = height / STEPS as f32;
+    (0..STEPS)
+        .map(|index| {
+            let depth = index as f32 + 1.0;
+            let half = half_width * depth / STEPS as f32;
+            fill(
+                Rect::new(
+                    centre_x - half,
+                    tip_y + (depth - 1.0) * step_height,
+                    half * 2.0,
+                    step_height + SEAM,
+                ),
+                color,
+            )
+        })
+        .collect()
+}
+
+/// An outlined circle: a disc with the background punched out of it.
+fn ring(icon: Rect, diameter: f32, thickness: f32, color: Color, background: Color) -> Vec<DrawCommand> {
+    let outer = centered(icon, diameter, diameter);
+    let inner = outer.inset(thickness);
+    vec![
+        rounded(outer, color, outer.size.width / 2.0),
+        rounded(inner, background, inner.size.width / 2.0),
+    ]
+}
+
+/// How far each step of a stacked triangle overhangs the next. Without it the
+/// anti-aliased edges of neighbouring rects leave visible seams down the
+/// arrowhead; a fraction of a logical pixel is enough to close them.
+const SEAM: f32 = 0.35;
+
+/// A triangle pointing right, stacked out of rects the way [`cross`] stacks
+/// its diagonal — `DrawCommand` has no polygon, and at icon sizes the steps
+/// read as a solid arrowhead.
+fn arrowhead_right(
+    tip_x: f32,
+    centre_y: f32,
+    half_height: f32,
+    width: f32,
+    color: Color,
+) -> Vec<DrawCommand> {
+    const STEPS: usize = 7;
+    let step_width = width / STEPS as f32;
+    (0..STEPS)
+        .map(|index| {
+            let depth = index as f32 + 1.0;
+            let half = half_height * depth / STEPS as f32;
+            fill(
+                Rect::new(
+                    tip_x - depth * step_width,
+                    centre_y - half,
+                    step_width + SEAM,
+                    half * 2.0,
+                ),
+                color,
+            )
+        })
+        .collect()
+}
+
 fn unavailable_cross(icon: Rect, color: Color) -> Vec<DrawCommand> {
     cross(
         Rect::new(icon.origin.x + 6.0, icon.origin.y + 6.0, 12.0, 12.0),

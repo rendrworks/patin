@@ -1094,6 +1094,7 @@ name = "patin-session"
 version = "0.1.0"
 dependencies = [
  "patin",
+ "patin-icons",
 ]
 
 [[package]]

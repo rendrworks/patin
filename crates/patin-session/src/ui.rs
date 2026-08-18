@@ -3,13 +3,18 @@ use patin::{
     ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign},
 };
 
-use crate::actions::Action;
+use patin_icons::{IconPalette, logout, power, reboot};
+
+use crate::actions::{Action, ActionKind};
 
 const PANEL_WIDTH: f32 = 240.0;
 const PANEL_INSET: f32 = 2.0;
 const HORIZONTAL_PADDING: f32 = 18.0;
 const VERTICAL_PADDING: f32 = 18.0;
 const ROW_HEIGHT: f32 = 36.0;
+/// Matches the launcher's row icons, so the two menus feel like one system.
+const ICON_SIZE: f32 = 18.0;
+const ICON_GAP: f32 = 12.0;
 const ERROR_HEIGHT: f32 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -116,9 +121,26 @@ impl Shell for SessionMenu {
             14.0,
         )];
         for row in &self.rows {
+            let action = &self.actions[row.action];
+            let icon_bounds = Rect::new(
+                row.bounds.origin.x,
+                row.bounds.origin.y + (ROW_HEIGHT - ICON_SIZE) / 2.0,
+                ICON_SIZE,
+                ICON_SIZE,
+            );
+            commands.extend(match action.kind {
+                ActionKind::LogOut => logout(icon_bounds, icon_palette()),
+                ActionKind::Reboot => reboot(icon_bounds, icon_palette()),
+                ActionKind::ShutDown => power(icon_bounds, icon_palette()),
+            });
             commands.push(text(
-                row.bounds,
-                &self.actions[row.action].label,
+                Rect::new(
+                    row.bounds.origin.x + ICON_SIZE + ICON_GAP,
+                    row.bounds.origin.y,
+                    (row.bounds.size.width - ICON_SIZE - ICON_GAP).max(1.0),
+                    row.bounds.size.height,
+                ),
+                &action.label,
                 14.0,
                 Color(245, 243, 255, 255),
             ));
@@ -145,6 +167,18 @@ impl Shell for SessionMenu {
 
     fn damage_all(&mut self) {
         SessionMenu::damage_all(self);
+    }
+}
+
+/// The icons are drawn against the panel, so their "background" — the colour
+/// they punch holes with — has to be the panel's fill, not the surface's.
+fn icon_palette() -> IconPalette {
+    IconPalette {
+        foreground: Color(245, 243, 255, 255),
+        muted: Color(120, 110, 140, 255),
+        background: Color(20, 17, 29, 255),
+        accent: Color(124, 58, 237, 255),
+        unavailable: Color(245, 130, 150, 255),
     }
 }
 
