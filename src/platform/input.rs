@@ -15,8 +15,8 @@ use smithay_client_toolkit::{
     },
 };
 
-use super::config::KeyInput;
 use super::Patin;
+use super::config::KeyInput;
 
 pub(super) struct ActiveTouch {
     touch: wl_touch::WlTouch,
@@ -32,7 +32,6 @@ impl Patin {
             self.request_redraw(queue_handle);
         }
     }
-
 
     pub(super) fn activate_at(&mut self, queue_handle: &QueueHandle<Self>, position: (f64, f64)) {
         let redraw = self.shell.activate_at(position);

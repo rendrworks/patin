@@ -11,13 +11,9 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
-use patin::{
-    ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign},
-};
+use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, Size, TextAlign};
 use patin_icons::WifiSignal;
-use patin_service_network::{
-    HotspotConfig, NetworkProvider, NetworkSnapshot, WifiNetwork,
-};
+use patin_service_network::{HotspotConfig, NetworkProvider, NetworkSnapshot, WifiNetwork};
 use zeroize::Zeroizing;
 
 const ROW: f32 = 52.0;
@@ -89,7 +85,6 @@ pub struct NetworkSettings {
     damage: Vec<Rect>,
 }
 
-
 impl NetworkSettings {
     pub fn new(page: Option<&str>) -> Self {
         let provider = NetworkProvider::new();
@@ -121,7 +116,6 @@ impl NetworkSettings {
         settings.layout();
         settings
     }
-
 
     fn redraw(&mut self) {
         self.layout();
@@ -169,4 +163,3 @@ fn aligned_text(bounds: Rect, value: &str, size: f32, align: TextAlign) -> DrawC
         align,
     }
 }
-

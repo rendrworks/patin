@@ -3,8 +3,8 @@
 //! whichever page is showing.
 
 use patin::{
-    service::Provider,
     platform::{KeyInput, Shell, TextInputPurpose},
+    service::Provider,
     ui::{Color, DrawCommand, Rect, Size, TextAlign},
 };
 use patin_icons::{IconPalette, wifi_signal};

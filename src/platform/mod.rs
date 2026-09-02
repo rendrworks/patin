@@ -29,9 +29,7 @@ use smithay_client_toolkit::{
     delegate_registry,
     output::OutputState,
     reexports::{
-        client::{
-            protocol::{wl_keyboard, wl_pointer, wl_seat, wl_surface, wl_touch},
-        },
+        client::protocol::{wl_keyboard, wl_pointer, wl_seat, wl_surface, wl_touch},
         protocols::wp::{
             fractional_scale::v1::client::{
                 wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
@@ -48,11 +46,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState, SimpleGlobal},
     registry_handlers,
     seat::SeatState,
-    shell::{
-        WaylandSurface,
-        wlr_layer::LayerSurface,
-        xdg::window::Window,
-    },
+    shell::{WaylandSurface, wlr_layer::LayerSurface, xdg::window::Window},
     shm::{Shm, slot::SlotPool},
 };
 

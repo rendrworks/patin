@@ -208,5 +208,4 @@ impl NetworkProvider {
             .ok_or_else(|| NetworkError(format!("no saved profile for {ssid}")))?;
         nmcli(&["connection", "delete", "uuid", uuid]).map(|_| ())
     }
-
 }

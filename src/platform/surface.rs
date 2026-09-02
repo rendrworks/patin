@@ -23,9 +23,9 @@ use smithay_client_toolkit::{
     shm::{Shm, ShmHandler},
 };
 
+use super::Patin;
 use crate::render::Scale;
 use crate::ui::Size;
-use super::Patin;
 
 impl LayerShellHandler for Patin {
     fn closed(

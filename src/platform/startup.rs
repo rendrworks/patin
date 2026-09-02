@@ -36,9 +36,7 @@ use smithay_client_toolkit::{
 
 use crate::render::{CpuRenderer, Scale};
 
-use super::config::{
-    KeyboardPolicy, LayerConfig, LayerLevel, LayerVisibility, WindowConfig,
-};
+use super::config::{KeyboardPolicy, LayerConfig, LayerLevel, LayerVisibility, WindowConfig};
 use super::shell::Shell;
 use super::{BYTES_PER_PIXEL, Patin, SurfaceConfig, SurfaceRole};
 
@@ -181,9 +179,9 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
         pending_visibility_change: false,
     };
 
-    event_loop.handle().insert_source(
-        Timer::from_duration(poll_interval),
-        |_, _, patin| {
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(poll_interval), |_, _, patin| {
             if patin.shell.update() {
                 patin.redraw_requested = true;
             }
@@ -192,8 +190,7 @@ fn run_surface(config: SurfaceConfig, shell: impl Shell + 'static) -> Result<(),
                 patin.exit = true;
             }
             TimeoutAction::ToDuration(patin.shell.poll_interval())
-        },
-    )?;
+        })?;
 
     if signal_toggle_enabled {
         let signals = Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2])?;

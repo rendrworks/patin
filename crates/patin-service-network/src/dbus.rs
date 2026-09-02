@@ -5,7 +5,9 @@ use zbus::zvariant::OwnedObjectPath;
 
 use crate::{HOTSPOT_PROFILE, NetworkSnapshot};
 
-pub(crate) fn network_manager_snapshot(connection: &zbus::blocking::Connection) -> Option<NetworkSnapshot> {
+pub(crate) fn network_manager_snapshot(
+    connection: &zbus::blocking::Connection,
+) -> Option<NetworkSnapshot> {
     let network_manager = zbus::blocking::Proxy::new(
         connection,
         "org.freedesktop.NetworkManager",

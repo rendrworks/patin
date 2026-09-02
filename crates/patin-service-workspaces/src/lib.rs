@@ -124,7 +124,8 @@ mod tests {
 
     #[test]
     fn uses_only_the_first_output_line() {
-        let response = "ok\noutput DSI-1 2\noutput HDMI-1 1\nworkspace 1 empty\nworkspace 2 occupied\n";
+        let response =
+            "ok\noutput DSI-1 2\noutput HDMI-1 1\nworkspace 1 empty\nworkspace 2 occupied\n";
         assert_eq!(
             parse_workspaces(response),
             Some(WorkspacesSnapshot {
@@ -158,6 +159,9 @@ mod tests {
 
     #[test]
     fn malformed_workspace_lines_are_rejected() {
-        assert_eq!(parse_workspaces("ok\nworkspace not-a-number occupied\n"), None);
+        assert_eq!(
+            parse_workspaces("ok\nworkspace not-a-number occupied\n"),
+            None
+        );
     }
 }

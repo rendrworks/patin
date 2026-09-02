@@ -297,7 +297,10 @@ pub fn logout(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
     let mut commands = vec![
         // Three sides only: the open side is where the arrow leaves.
         fill(Rect::new(x, y + 1.0, thickness, 16.0), palette.foreground),
-        fill(Rect::new(x, y + 1.0, door_width, thickness), palette.foreground),
+        fill(
+            Rect::new(x, y + 1.0, door_width, thickness),
+            palette.foreground,
+        ),
         fill(
             Rect::new(x, y + 15.0, door_width, thickness),
             palette.foreground,
@@ -308,7 +311,13 @@ pub fn logout(bounds: Rect, palette: IconPalette) -> Vec<DrawCommand> {
             palette.foreground,
         ),
     ];
-    commands.extend(arrowhead_right(x + 17.5, middle, 3.6, 5.0, palette.foreground));
+    commands.extend(arrowhead_right(
+        x + 17.5,
+        middle,
+        3.6,
+        5.0,
+        palette.foreground,
+    ));
     commands
 }
 
@@ -341,7 +350,13 @@ fn arrowhead_up(
 }
 
 /// An outlined circle: a disc with the background punched out of it.
-fn ring(icon: Rect, diameter: f32, thickness: f32, color: Color, background: Color) -> Vec<DrawCommand> {
+fn ring(
+    icon: Rect,
+    diameter: f32,
+    thickness: f32,
+    color: Color,
+    background: Color,
+) -> Vec<DrawCommand> {
     let outer = centered(icon, diameter, diameter);
     let inner = outer.inset(thickness);
     vec![

@@ -5,9 +5,7 @@
 use patin::platform::KeyInput;
 use patin_service_network::{HotspotBand, HotspotSecurity, WifiSecurity};
 
-use super::{
-    Action, Editing, NetworkSettings, Page, WIFI_REFRESH_TICKS, WIFI_SCAN_TICKS,
-};
+use super::{Action, Editing, NetworkSettings, Page, WIFI_REFRESH_TICKS, WIFI_SCAN_TICKS};
 
 impl NetworkSettings {
     fn result(&mut self, result: Result<(), impl std::fmt::Display>) {

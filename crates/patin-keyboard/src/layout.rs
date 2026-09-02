@@ -4,7 +4,7 @@
 
 use patin::ui::Rect;
 
-use super::{Key, KeyboardMode, KeyLayout, Page};
+use super::{Key, KeyLayout, KeyboardMode, Page};
 
 pub(crate) fn keyboard(
     mode: KeyboardMode,

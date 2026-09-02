@@ -6,10 +6,7 @@ use std::io::Write;
 use std::os::fd::AsFd;
 
 use smithay_client_toolkit::reexports::{
-    client::{
-        Connection, Dispatch, QueueHandle,
-        protocol::wl_seat,
-    },
+    client::{Connection, Dispatch, QueueHandle, protocol::wl_seat},
     protocols::wp::text_input::zv3::client::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3,
         zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
@@ -17,8 +14,8 @@ use smithay_client_toolkit::reexports::{
     protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
 };
 
-use super::config::{KeyInput, TextInputPurpose, VirtualKey};
 use super::Patin;
+use super::config::{KeyInput, TextInputPurpose, VirtualKey};
 
 pub(super) struct TextInputHandle {
     pub(super) seat: wl_seat::WlSeat,
@@ -29,7 +26,11 @@ pub(super) struct TextInputHandle {
 }
 
 impl Patin {
-    pub(super) fn ensure_text_input(&mut self, seat: &wl_seat::WlSeat, queue_handle: &QueueHandle<Self>) {
+    pub(super) fn ensure_text_input(
+        &mut self,
+        seat: &wl_seat::WlSeat,
+        queue_handle: &QueueHandle<Self>,
+    ) {
         if let Some(manager) = &self.text_input_manager
             && !self.text_inputs.iter().any(|known| known.seat == *seat)
         {
@@ -119,7 +120,6 @@ impl Patin {
             }
         }
     }
-
 }
 
 fn upload_virtual_keymap(virtual_keyboard: &ZwpVirtualKeyboardV1, keymap: &str) {

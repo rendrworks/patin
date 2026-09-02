@@ -50,7 +50,6 @@ impl Patin {
         self.pending_visibility_change = true;
     }
 
-
     pub(super) fn draw(&mut self, queue_handle: &QueueHandle<Self>) {
         if self.hidden {
             self.redraw_requested = false;
@@ -120,5 +119,4 @@ impl Patin {
             );
         }
     }
-
 }
