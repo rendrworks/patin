@@ -39,7 +39,7 @@ use smithay_client_toolkit::{
 use std::{
     error::Error,
     process::{Command, ExitCode},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicI32, Ordering},
     sync::mpsc::{Receiver, Sender},
     time::{Duration, Instant},
 };
@@ -52,9 +52,25 @@ use app::run_lock;
 const BYTES_PER_PIXEL: usize = 4;
 
 static POWER_BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
+/// Write end of the self-pipe the signal handler pokes; -1 until [`app`]
+/// installs it.
+static WAKE_PIPE: AtomicI32 = AtomicI32::new(-1);
 
+/// Runs in signal context, so it may call only async-signal-safe functions.
+///
+/// Setting the flag is not enough on its own: calloop retries `poll` on
+/// `EINTR` rather than returning, so a signal alone never ends a dispatch
+/// early — the loop just recomputes its remaining timeout and sleeps again.
+/// Writing a byte to a pipe the event loop is watching is what actually wakes
+/// it, and `write` is on the short list of calls a handler may make.
 extern "C" fn handle_power_button_signal(_signal: libc::c_int) {
     POWER_BUTTON_PRESSED.store(true, Ordering::SeqCst);
+    let fd = WAKE_PIPE.load(Ordering::SeqCst);
+    if fd >= 0 {
+        // A full pipe means a wakeup is already queued, and there is nothing
+        // useful a handler could do about an error anyway.
+        unsafe { libc::write(fd, [1u8].as_ptr().cast(), 1) };
+    }
 }
 
 struct View {

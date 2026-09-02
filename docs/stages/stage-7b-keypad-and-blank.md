@@ -56,10 +56,10 @@ and waking on any of that would defeat the point of blanking it.
 
 Two independent triggers toggle the blank state instead (off if currently
 on, back on if currently off), so a single press or signal always does the
-right thing and responds within roughly one event-loop tick:
+right thing:
 
-- A `SIGUSR1` sent to the `--worker` process, checked once per dispatch loop
-  iteration. Useful for scripted/SSH testing, e.g.:
+- A `SIGUSR1` sent to the `--worker` process. Useful for scripted/SSH
+  testing, e.g.:
   ```sh
   pkill -USR1 -f -- '--worker'
   ```
@@ -78,6 +78,40 @@ right thing and responds within roughly one event-loop tick:
   through an external signal. Any compositor that forwards keys to the lock
   client the same way (which `ext-session-lock-v1` more or less implies) gets
   this for free, with zero configuration.
+
+### What the loop costs while blanked
+
+The dispatch loop originally woke every 50 ms unconditionally, including with
+the display off — twenty wakeups a second at a screen nobody can see, which on
+a phone is enough to keep the CPU out of its deeper idle states all night.
+While blanked and with no authentication in flight the loop now sleeps for 30
+seconds instead (`App::dispatch_timeout`); it returns to 50 ms the moment the
+screen is awake, where the password field, the blank timer, and the PAM result
+all want to feel immediate. The auth exception matters because `poll_auth`
+reads its channel by polling: a password submitted just before the screen
+blanked would otherwise wait out the whole long tick before unlocking.
+
+Lengthening that timeout is only safe because everything that can happen while
+blanked arrives as an event source. Compositor input does — which is how the
+physical `XF86PowerOff` key still wakes the screen at once, since it is an
+ordinary `wl_keyboard` event rather than a signal. `SIGUSR1` did not, and this
+is the subtle part: calloop retries `poll` on `EINTR` rather than returning
+(`loop_logic.rs`), so a handler that merely sets a flag never ends a dispatch
+early — the loop recomputes its remaining timeout and sleeps again. With a 50
+ms tick that cost nothing; with a 30-second one it would have meant a signal
+taking up to half a minute to be noticed.
+
+So the handler now also writes a byte to a self-pipe that the event loop
+watches as a `Generic` source, `write` being one of the few calls a signal
+handler may legally make. `the_power_button_ends_a_long_dispatch_instead_of_waiting_it_out`
+sends `SIGUSR1` from another thread while the loop is already blocked and
+asserts the dispatch returns in well under the blanked tick; with the pipe
+write removed it fails after the full 30 seconds, which is the regression it
+exists to catch.
+
+Suspending the machine remains out of scope: this blanks the display and
+nothing more. A session that wants idle-suspend needs a policy of its own,
+in logind or an idle daemon, and Patin does not provide one.
 
 ## Verification
 

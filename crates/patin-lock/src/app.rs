@@ -2,6 +2,7 @@
 //! running the event loop until the password is accepted.
 
 use std::error::Error;
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::channel;
@@ -14,7 +15,7 @@ use smithay_client_toolkit::{
     compositor::FrameCallbackData,
     output::OutputState,
     reexports::{
-        calloop::EventLoop,
+        calloop::{EventLoop, Interest, Mode as PollMode, PostAction, generic::Generic},
         calloop_wayland_source::WaylandSource,
         client::{
             Connection, QueueHandle,
@@ -35,7 +36,39 @@ use smithay_client_toolkit::{
 use crate::auth::{AuthResult, authenticate, effective_username};
 use crate::power::{OutputPowerData, OutputPowerManagerData};
 use crate::ui::{Key, LockUi};
-use crate::{App, BYTES_PER_PIXEL, POWER_BUTTON_PRESSED, View, handle_power_button_signal};
+use crate::{
+    App, BYTES_PER_PIXEL, POWER_BUTTON_PRESSED, View, WAKE_PIPE, handle_power_button_signal,
+};
+
+/// How often the loop wakes while someone is actually at the screen. The
+/// password field, the blank timer, and the PAM result all want to feel
+/// immediate.
+const AWAKE_TICK: Duration = Duration::from_millis(50);
+/// How often it wakes once the display is off and nothing is being verified.
+///
+/// Everything that can happen while blanked now arrives as an event —
+/// compositor input, and the power button through the pipe above — so this
+/// ceiling exists only so a missed wakeup cannot leave a phone that looks
+/// dead. Twenty wakeups a second at a screen nobody can see is a real cost on
+/// a battery; one every thirty seconds is not.
+const BLANKED_TICK: Duration = Duration::from_secs(30);
+
+/// A non-blocking, close-on-exec pipe for the signal handler to poke.
+fn wake_pipe() -> Result<OwnedFd, Box<dyn Error>> {
+    let mut ends = [0 as libc::c_int; 2];
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+        return Err(format!(
+            "could not create the power-button pipe: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    // The write end outlives this function and is only ever touched by the
+    // signal handler, so it is deliberately never closed: the process exiting
+    // is what releases it.
+    WAKE_PIPE.store(ends[1], Ordering::SeqCst);
+    Ok(unsafe { OwnedFd::from_raw_fd(ends[0]) })
+}
 
 pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
     let settings = crate::settings::Settings::load();
@@ -110,6 +143,32 @@ pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
         app.add_output(output, &queue_handle)?;
     }
 
+    // The power button reaches the lock as SIGUSR1, because the compositor
+    // grabs that key rather than sending it as input. The handler writes to
+    // this pipe and the pipe is an ordinary event source, so a press ends the
+    // current dispatch immediately however long its timeout was.
+    let wake = wake_pipe()?;
+    event_loop
+        .handle()
+        .insert_source(
+            Generic::new(wake, Interest::READ, PollMode::Level),
+            |_readiness, pipe, _app| {
+                // Drained so the source does not stay readable and spin. The
+                // byte itself carries nothing; POWER_BUTTON_PRESSED does.
+                let mut discard = [0u8; 16];
+                while unsafe {
+                    libc::read(
+                        pipe.as_fd().as_raw_fd(),
+                        discard.as_mut_ptr().cast(),
+                        discard.len(),
+                    )
+                } > 0
+                {}
+                Ok(PostAction::Continue)
+            },
+        )
+        .map_err(|error| format!("could not watch the power-button pipe: {error}"))?;
+
     unsafe {
         libc::signal(
             libc::SIGUSR1,
@@ -118,7 +177,7 @@ pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
     }
 
     while !app.exit {
-        event_loop.dispatch(Some(Duration::from_millis(50)), &mut app)?;
+        event_loop.dispatch(Some(app.dispatch_timeout()), &mut app)?;
         app.poll_auth();
         if POWER_BUTTON_PRESSED.swap(false, Ordering::SeqCst) {
             let blanked = app.blanked;
@@ -244,6 +303,18 @@ impl App {
         }
     }
 
+    /// Sleep longer once the screen is off, but never while an authentication
+    /// is still in flight: `poll_auth` reads its channel by polling, so a
+    /// password submitted just before the screen blanked would otherwise wait
+    /// out the whole long tick before unlocking.
+    pub(crate) fn dispatch_timeout(&self) -> Duration {
+        if self.blanked && !self.ui.verifying {
+            BLANKED_TICK
+        } else {
+            AWAKE_TICK
+        }
+    }
+
     fn poll_auth(&mut self) {
         let Ok(result) = self.auth_rx.try_recv() else {
             return;
@@ -318,5 +389,82 @@ impl App {
         surface.commit();
         view.frame_pending = true;
         view.redraw = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AWAKE_TICK, BLANKED_TICK, Generic, Interest, PollMode, PostAction, wake_pipe};
+    use crate::{POWER_BUTTON_PRESSED, WAKE_PIPE, handle_power_button_signal};
+    use smithay_client_toolkit::reexports::calloop::EventLoop;
+    use std::os::fd::{AsFd, AsRawFd};
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    /// The regression this guards: calloop retries `poll` on `EINTR` instead
+    /// of returning, so a signal handler that only sets a flag cannot end a
+    /// dispatch early. Before the pipe, lengthening the blanked tick would
+    /// have meant the power button taking up to that long to light the
+    /// screen — a phone that looks dead.
+    #[test]
+    fn the_power_button_ends_a_long_dispatch_instead_of_waiting_it_out() {
+        let wake = wake_pipe().expect("power-button pipe");
+        let mut event_loop = EventLoop::<bool>::try_new().expect("event loop");
+        event_loop
+            .handle()
+            .insert_source(
+                Generic::new(wake, Interest::READ, PollMode::Level),
+                |_readiness, pipe, woken: &mut bool| {
+                    let mut discard = [0u8; 16];
+                    while unsafe {
+                        libc::read(
+                            pipe.as_fd().as_raw_fd(),
+                            discard.as_mut_ptr().cast(),
+                            discard.len(),
+                        )
+                    } > 0
+                    {}
+                    *woken = true;
+                    Ok(PostAction::Continue)
+                },
+            )
+            .expect("watch the pipe");
+
+        unsafe {
+            libc::signal(
+                libc::SIGUSR1,
+                handle_power_button_signal as *const () as libc::sighandler_t,
+            );
+        }
+        // Sent while the loop is already blocked, which is the case that
+        // matters; a signal raised beforehand would leave the pipe readable
+        // and prove nothing about waking.
+        std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+            unsafe { libc::kill(libc::getpid(), libc::SIGUSR1) };
+        });
+
+        let mut woken = false;
+        let started = Instant::now();
+        event_loop
+            .dispatch(Some(BLANKED_TICK), &mut woken)
+            .expect("dispatch");
+        let elapsed = started.elapsed();
+
+        assert!(woken, "the pipe source never fired");
+        assert!(
+            POWER_BUTTON_PRESSED.swap(false, Ordering::SeqCst),
+            "the handler did not record the press"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "dispatch waited out the blanked tick ({elapsed:?}) instead of waking on the signal"
+        );
+        WAKE_PIPE.store(-1, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn the_blanked_tick_is_far_longer_than_the_awake_one() {
+        assert!(BLANKED_TICK >= AWAKE_TICK * 100);
     }
 }
