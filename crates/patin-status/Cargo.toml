@@ -1,0 +1,16 @@
+[package]
+name = "patin-status"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A shared status strip of clock and system icons for Patin shell compositions"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+patin = { path = "../.." }
+patin-icons = { path = "../patin-icons" }
+patin-service-network = { path = "../patin-service-network" }
+patin-service-upower = { path = "../patin-service-upower" }
+patin-service-volume = { path = "../patin-service-volume" }

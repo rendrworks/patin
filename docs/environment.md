@@ -66,12 +66,39 @@ an incomplete remote-session `XDG_DATA_DIRS` cannot hide system icons. These
 dependencies remain launcher-only; entries without a usable icon receive a
 neutral fallback.
 
+The optional `patin-lua` crate adds [luna](https://github.com/onix-os/luna)
+0.5.1, a stackless Lua interpreter in pure Rust, pinned by git revision
+because it is not published to crates.io. It is the only dependency in the
+workspace taken from git, and the pin is exact for the same reason every
+version here is. Two properties chose it over `mlua`: it is pure Rust, so a
+config file costs no C toolchain on a cross-compiled phone image, and it is
+stackless, so control returns to Patin between slices of VM work and a config
+with a runaway loop is stopped by a fuel budget instead of hanging a lock
+screen. Default features are off; neither `async` nor `derive` is used. The
+crate reaches only the compositions that opt into it — `patin-workspaces-bar`,
+`patin-session`, `patin-lock`, and `patin-login` — and never the `patin`
+toolkit crate. CI needs no new system package for it.
+
+The config file is `$XDG_CONFIG_HOME/patin/init.lua`, else
+`~/.config/patin/init.lua`. `PATIN_CONFIG` names another path and
+`PATIN_NO_CONFIG=1` skips the file entirely; `--config=` beats both, as every
+Patin argument beats its variable. The VM is started at luna's `core` level —
+base, string, table, math, coroutine, utf8 — without `io`, `os`, `package`, or
+`debug`; a config probes its machine through `patin.env`, `patin.exists`,
+`patin.which`, and `patin.log` instead, so nothing a config author reaches can
+block a frame on a syscall. `data/patin/init.lua.example` is a complete file to
+copy.
+
 The optional `patin-session` composition adds no dependency. It launches
 `systemctl reboot` and `systemctl poweroff` as separate program/argument values.
 A compositor integration may add its logout row with
 `PATIN_SESSION_LOGOUT_PROGRAM`, optional `PATIN_SESSION_LOGOUT_ARGUMENT`, and
 optional `PATIN_SESSION_LOGOUT_LABEL`; Patin never evaluates them through a
-shell.
+shell. Those variables still outrank a `patin.actions["logout"]` entry in
+`init.lua`, so an integration that ships a working logout row does not stop
+working because someone wrote a config. A config may add, replace, reorder, or
+remove any other row, and its `run` list is passed to `Command` as a program
+and its arguments — never through a shell either.
 
 The toolkit does not require a battery, backlight, or audio command. The demo
 optionally uses `/sys/class/power_supply`, `/sys/class/backlight`, `wpctl`, and

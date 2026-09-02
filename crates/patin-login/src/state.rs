@@ -118,7 +118,8 @@ mod tests {
 
     #[test]
     fn saving_then_loading_round_trips_through_a_real_file() {
-        let directory = std::env::temp_dir().join(format!("patin-login-state-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("patin-login-state-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let file = directory.join("last-session");
         // SAFETY: single-threaded test, and the variable is restored below.

@@ -14,8 +14,8 @@ use smithay_client_toolkit::{
     },
 };
 
-use crate::ui::Key;
 use crate::App;
+use crate::ui::Key;
 
 impl SeatHandler for App {
     fn seat_state(&mut self) -> &mut SeatState {

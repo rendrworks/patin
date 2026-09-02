@@ -1,0 +1,65 @@
+-- Patin configuration.
+--
+-- Copy to ~/.config/patin/init.lua. Every setting is optional: what this file
+-- does not mention keeps Patin's built-in value, so it is safe to delete all
+-- of this and add one line back.
+--
+-- Start any composition with PATIN_NO_CONFIG=1 to ignore this file entirely,
+-- or --config=/path/to/other.lua to use another one.
+
+local patin = require("patin")
+
+-- Shared by every composition. A composition that names its own colour below
+-- overrides the shared one for itself.
+patin.theme.background = "#0f0d18"
+patin.theme.foreground = "#faf8ff"
+patin.theme.muted = "#a69bb8"
+patin.theme.accent = "#7c3aed"
+patin.theme.error = "#e896b1"
+
+-- The workspaces strip along the bottom edge.
+patin.bar.pill = { width = 32, height = 10, gap = 12, radius = 5 }
+
+-- The lock screen. Keeps the shared palette above, but a lock screen is worth
+-- telling apart from the greeter, so it gets its own field colours.
+patin.lock.field_fill = "#231e2f"
+patin.lock.field_border = "#4b3e62"
+patin.lock.blank_after = 1
+patin.lock.blank_after_typing = 5
+
+-- The greeter, in its cooler sibling palette.
+patin.login.accent = "#52c4ba"
+patin.login.background = "#0b0f18"
+patin.login.greeting = "Sign in to continue"
+
+-- A phone with no hardware keyboard wants the touch keypad everywhere.
+if patin.exists("/sys/class/power_supply/bq25890-charger") then
+  patin.lock.keypad = "numeric"
+  patin.login.keypad = "numeric"
+end
+
+-- The session menu. Rows are keyed, so naming one twice replaces it rather
+-- than showing it twice, and `false` takes one of Patin's own rows away.
+patin.actions["reboot"] = {
+  label = "Reboot",
+  icon = "reboot",
+  run = { "systemctl", "reboot" },
+  order = 20,
+}
+
+-- Only offer a logout row if the compositor that provides it is installed.
+if patin.which("0xinctl") then
+  patin.actions["logout"] = {
+    label = "Log out",
+    icon = "logout",
+    run = { "0xinctl", "exit" },
+    order = 10,
+  }
+end
+
+patin.actions["suspend"] = {
+  label = "Suspend",
+  icon = "power",
+  run = { "systemctl", "suspend" },
+  order = 15,
+}

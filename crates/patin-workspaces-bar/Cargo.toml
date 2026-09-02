@@ -8,4 +8,5 @@ publish.workspace = true
 
 [dependencies]
 patin = { path = "../.." }
+patin-lua = { path = "../patin-lua" }
 patin-service-workspaces = { path = "../patin-service-workspaces" }

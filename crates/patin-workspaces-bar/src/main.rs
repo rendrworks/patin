@@ -3,8 +3,21 @@ mod ui;
 use std::process::ExitCode;
 
 use patin::platform::{Anchors, KeyboardPolicy, LayerConfig, LayerLevel, LayerVisibility};
+use patin_lua::Config;
 
 fn main() -> ExitCode {
+    // Fatal, unlike the lock screen and the greeter: this bar guards nothing,
+    // and starting it with settings the user did not ask for is worse than
+    // saying what is wrong with the file.
+    let settings = match Config::load() {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("patin-workspaces-bar: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let style = ui::Style::from_config(&settings);
+
     let config = LayerConfig {
         namespace: "patin-workspaces-bar".into(),
         // Bottom, not Top: 0xin's arrange_layers processes numeric layers
@@ -26,16 +39,16 @@ fn main() -> ExitCode {
             left: true,
             right: true,
         },
-        size: (0, ui::BAR_HEIGHT as u32),
+        size: (0, style.height as u32),
         // A real reservation, like the OSK's own exclusive zone: windows
         // (and, per the layer ordering above, the keyboard) shrink to leave
         // room for the strip, so nothing ever overlaps it.
-        exclusive_zone: ui::BAR_HEIGHT as i32,
+        exclusive_zone: style.height as i32,
         keyboard: KeyboardPolicy::None,
         visibility: LayerVisibility::Fixed,
     };
 
-    match patin::platform::run(config, ui::WorkspacesBarShell::new()) {
+    match patin::platform::run(config, ui::WorkspacesBarShell::new(style)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("patin-workspaces-bar: {error}");

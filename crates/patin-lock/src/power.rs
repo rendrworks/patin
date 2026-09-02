@@ -7,9 +7,7 @@ use smithay_client_toolkit::{
         client::{Connection, Proxy, QueueHandle},
         protocols_wlr::output_power_management::v1::client::{
             zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1,
-            zwlr_output_power_v1::{
-                Event as OutputPowerEvent, ZwlrOutputPowerV1,
-            },
+            zwlr_output_power_v1::{Event as OutputPowerEvent, ZwlrOutputPowerV1},
         },
     },
 };

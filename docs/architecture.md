@@ -159,9 +159,10 @@ disabled or disconnected.
 Battery, volume, brightness, and network themselves are toolkit-level
 provider crates (see "Service adapters" below), not example implementation
 details — only their composition into one `StatusSnapshot` in
-`examples/demo_bar/services.rs` is. The Chrono dependency is a genuine
-example-only detail. None of this is exported by `src/lib.rs` or ever
-constructed by `platform::run`.
+`examples/demo_bar/services.rs` is. The greeter and the lock screen compose
+the same providers through the shared `patin-status` crate instead; the demo
+bar keeps its own, for the reasons below. None of this is exported by
+`src/lib.rs` or ever constructed by `platform::run`.
 
 Reusable presentation assets follow the same opt-in boundary. The
 `patin-icons` workspace crate converts semantic states into ordinary
@@ -174,6 +175,53 @@ palettes appropriate to their own surfaces.
 The demo bar contains no status-icon drawing helpers. It maps provider values
 to icon states and composes the resulting battery, volume, Wi-Fi, wired, and
 cellular commands around its clock.
+
+`patin-status` sits one level above `patin-icons` and does own a layout: a
+fixed strip with a clock on the left and icons growing inward from the right,
+plus the polling that feeds it. It exists because the greeter and the lock
+screen want the same strip in the same place, and a second copy of the
+provider throttling and the visibility rules would drift from the first. A
+composition supplies its own `IconPalette` — whose `background` must be the
+fill drawn behind the strip, since several glyphs punch holes in it rather
+than being transparent — and chooses whether to show the clock and the volume
+icon. The volume provider is constructed only when asked for, because polling
+it spawns `wpctl` or `pactl` rather than reading D-Bus.
+
+The demo bar deliberately stays outside that crate. It lays its row out with
+`patin::ui::row`, tracks per-icon damage rectangles, and turns its Wi-Fi and
+cellular icons into hit targets that launch network settings. None of that is
+a strip, so sharing would mean generalizing `patin-status` into something
+neither consumer wants. The duplication that remains between them is a few
+lines of visibility predicates, which is cheaper than the abstraction.
+
+Refresh cadence is the crate's own concern rather than the consumer's. The
+greeter ticks every 200ms so a sign-in result lands promptly, and the lock
+every 50ms; the strip measures its provider refreshes against the clock
+instead, so neither rate turns into a different D-Bus load.
+
+## Configuration
+
+Configuration is a crate, not a layer of the toolkit. `crates/patin-lua`
+embeds a Lua interpreter, reads `~/.config/patin/init.lua` once at startup,
+and hands each composition an owned tree of plain Rust values; the VM is torn
+down before the first frame, so nothing borrows from a garbage collector at
+draw time. The `patin` crate does not depend on it, and a consumer that wants
+no config file compiles no interpreter — the same boundary the service
+adapters keep for `zbus`.
+
+The shape follows from one rule: a setting the config never mentions is left
+alone. Every accessor returns an `Option`, so an unset key falls through to
+the `PATIN_*` variable, the command-line flag, or the built-in constant that
+was already there, and adding a config file changed no existing precedence.
+Each accessor takes a list of keys and returns the first one set, which is how
+`patin.theme.accent` reaches every composition while `patin.lock.accent`
+overrides it for one.
+
+A raise while loading is fatal and names file and line, because carrying on
+would apply a shell the user did not ask for. `patin-lock` and `patin-login`
+are the deliberate exception: they report the error and continue with built-in
+defaults, since a broken colour must never be the reason a machine cannot be
+unlocked or signed into.
 
 ## Service adapters
 

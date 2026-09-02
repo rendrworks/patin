@@ -24,8 +24,10 @@ Patin's default behavior and do not become required dependencies for
 consumers.
 
 Patin remains a shell-focused toolkit rather than a general-purpose
-application GUI framework, configuration language, or reactive hot-reload
-runtime.
+application GUI framework or reactive hot-reload runtime. Compositions may be
+configured in Lua through the opt-in `patin-lua` crate, read once at startup;
+the toolkit crate itself has no configuration language and does not depend on
+one.
 
 The work is split into small visible stages. Every completed stage explains the
 concepts it introduces, the files and important functions it changes, and the

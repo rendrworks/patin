@@ -10,8 +10,8 @@
 
 mod greetd;
 mod sessions;
+mod settings;
 mod state;
-mod status;
 mod ui;
 
 use std::process::ExitCode;
@@ -25,15 +25,14 @@ use patin::{
     ui::{DrawCommand, Rect, Size},
 };
 
+use patin_status::Status;
+
 use greetd::{Backend, LoginResult};
 use sessions::Session;
-use status::Status;
-use ui::{Key, KeyboardMode, LoginUi};
-
-/// The session greetd starts once the credentials are accepted.
-const DEFAULT_SESSION: &str = "0xin";
+use ui::{Key, LoginUi};
 
 fn main() -> ExitCode {
+    let settings = settings::Settings::load();
     let backend = Backend::detect();
     if backend.is_preview() {
         eprintln!(
@@ -59,7 +58,7 @@ fn main() -> ExitCode {
         visibility: LayerVisibility::Fixed,
     };
 
-    match patin::platform::run(config, Greeter::new(backend)) {
+    match patin::platform::run(config, Greeter::new(backend, settings)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("patin-login: {error}");
@@ -69,6 +68,7 @@ fn main() -> ExitCode {
 }
 
 struct Greeter {
+    settings: settings::Settings,
     ui: LoginUi,
     status: Status,
     backend: Backend,
@@ -82,9 +82,9 @@ struct Greeter {
 }
 
 impl Greeter {
-    fn new(backend: Backend) -> Self {
+    fn new(backend: Backend, settings: settings::Settings) -> Self {
         let (result_sender, results) = channel();
-        let sessions = sessions::discover(&session_command());
+        let sessions = sessions::discover(&settings.session_command());
         let remembered = state::load();
         // Whatever was used last, if it is still on offer; otherwise the
         // first, so a removed session degrades to a sensible default rather
@@ -99,18 +99,22 @@ impl Greeter {
             .map(|session| session.name.clone())
             .unwrap_or_default();
         // An explicit --user= or PATIN_LOGIN_USER still wins over memory.
-        let username = requested_username()
+        let username = settings
+            .requested_username()
             .or(remembered.username)
             .unwrap_or_else(default_username);
         Self {
             ui: LoginUi::new(
-                keyboard_mode_from_args(),
+                settings.mode,
                 username,
                 hostname(),
                 name,
                 sessions.len() > 1,
+                settings.theme,
+                settings.greeting.clone(),
             ),
-            status: Status::new(),
+            status: Status::new(settings.theme.status_palette()),
+            settings,
             backend,
             sessions,
             selected,
@@ -140,7 +144,7 @@ impl Greeter {
         let chosen = self.sessions.get(self.selected);
         let command = chosen
             .map(|session| session.command.clone())
-            .unwrap_or_else(session_command);
+            .unwrap_or_else(|| self.settings.session_command());
         if let Some(session) = chosen {
             state::save(&username, &session.name);
         }
@@ -162,7 +166,8 @@ impl Greeter {
             return;
         }
         self.selected = (self.selected + 1) % self.sessions.len();
-        self.ui.set_session(self.sessions[self.selected].name.clone());
+        self.ui
+            .set_session(self.sessions[self.selected].name.clone());
         self.damage_all();
     }
 
@@ -203,11 +208,17 @@ impl Shell for Greeter {
     }
 
     fn activate_at(&mut self, position: (f64, f64)) -> bool {
-        if self.ui.session_at(self.size.width, self.size.height, position) {
+        if self
+            .ui
+            .session_at(self.size.width, self.size.height, position)
+        {
             self.cycle_session();
             return true;
         }
-        if let Some(field) = self.ui.field_at(self.size.width, self.size.height, position) {
+        if let Some(field) = self
+            .ui
+            .field_at(self.size.width, self.size.height, position)
+        {
             if self.ui.focus != field {
                 self.ui.focus = field;
                 self.damage_all();
@@ -262,44 +273,6 @@ impl Shell for Greeter {
     }
 }
 
-fn keyboard_mode_from_args() -> KeyboardMode {
-    let value = std::env::args()
-        .find_map(|argument| argument.strip_prefix("--keypad=").map(str::to_string))
-        .or_else(|| std::env::var("PATIN_LOGIN_KEYPAD").ok());
-    match value.as_deref() {
-        Some("numeric") => KeyboardMode::Numeric,
-        Some("extended") => KeyboardMode::Extended,
-        Some("full") | None => KeyboardMode::Full,
-        Some(other) => {
-            eprintln!("patin-login: unrecognized --keypad value {other:?}; using full keyboard");
-            KeyboardMode::Full
-        }
-    }
-}
-
-/// The session command greetd should exec. Whitespace-separated so a profile
-/// can pass arguments (`--session="0xin --debug"`).
-fn session_command() -> Vec<String> {
-    let value = std::env::args()
-        .find_map(|argument| argument.strip_prefix("--session=").map(str::to_string))
-        .or_else(|| std::env::var("PATIN_LOGIN_SESSION").ok())
-        .unwrap_or_else(|| DEFAULT_SESSION.to_string());
-    let command: Vec<String> = value.split_whitespace().map(str::to_string).collect();
-    if command.is_empty() {
-        vec![DEFAULT_SESSION.to_string()]
-    } else {
-        command
-    }
-}
-
-/// An operator-specified account, which overrides both memory and detection.
-fn requested_username() -> Option<String> {
-    std::env::args()
-        .find_map(|argument| argument.strip_prefix("--user=").map(str::to_string))
-        .or_else(|| std::env::var("PATIN_LOGIN_USER").ok())
-        .filter(|username| !username.is_empty())
-}
-
 fn default_username() -> String {
     first_login_account(&std::fs::read_to_string("/etc/passwd").unwrap_or_default())
         .unwrap_or_default()
@@ -331,7 +304,7 @@ fn hostname() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_login_account, session_command};
+    use super::first_login_account;
 
     #[test]
     fn picks_the_first_real_login_account() {
@@ -353,12 +326,5 @@ greetd:x:114:120:greetd:/var/lib/greetd:/sbin/nologin
 locked:x:1001:1001:,,,:/home/locked:/bin/false
 ";
         assert_eq!(first_login_account(passwd), None);
-    }
-
-    #[test]
-    fn the_session_command_defaults_and_splits_arguments() {
-        // No --session argument and no environment override in the test
-        // process, so this exercises the default.
-        assert_eq!(session_command(), vec!["0xin".to_string()]);
     }
 }

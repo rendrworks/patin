@@ -1,0 +1,12 @@
+[package]
+name = "patin-lua"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "An embedded Lua configuration layer for Patin shell compositions"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+luna = { git = "https://github.com/onix-os/luna", rev = "8b370fc7975cc9a3fbf18c07d9250d63aa2bbca6", default-features = false }
+patin = { path = "../.." }

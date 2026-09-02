@@ -8,12 +8,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 patin = { path = "../.." }
 patin-icons = { path = "../patin-icons" }
-patin-service-network = { path = "../patin-service-network" }
-patin-service-upower = { path = "../patin-service-upower" }
 patin-keyboard = { path = "../patin-keyboard" }
+patin-lua = { path = "../patin-lua" }
+patin-status = { path = "../patin-status" }
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "=1.0.149", default-features = false, features = ["std"] }
 zeroize = "=1.9.0"

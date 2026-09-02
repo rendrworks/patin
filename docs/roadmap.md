@@ -23,7 +23,11 @@ instantiated by the library:
    settings, notifications, and keyboard control without making them defaults.
    Network settings now cover Wi-Fi, mobile-data, and hotspot essentials;
    saved Wi-Fi availability uses shared icons and freshness-aware refresh, and
-   editable fields use the compositor-selected session OSK. Launcher
+   editable fields use the compositor-selected session OSK. Compositions may
+   now be configured in Lua through the opt-in `patin-lua` crate: shared and
+   per-composition colours, the workspaces strip's geometry, lock and greeter
+   settings, and keyed session-menu rows. Config-defined widgets, plugin
+   discovery, and Lua handlers for runtime events remain later work. Launcher
    search, advanced IP/DNS, APN, roaming, and enterprise enrollment remain
    later work.
 9. **Compositor integration** — add a replaceable adapter for 0xin workspace

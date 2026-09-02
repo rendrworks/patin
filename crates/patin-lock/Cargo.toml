@@ -11,6 +11,9 @@ chrono = { version = "=0.4.45", default-features = false, features = ["clock", "
 libc = "=0.2.189"
 pam-client2 = { version = "=0.5.5", default-features = false }
 patin = { path = "../.." }
+patin-icons = { path = "../patin-icons" }
 patin-keyboard = { path = "../patin-keyboard" }
+patin-lua = { path = "../patin-lua" }
+patin-status = { path = "../patin-status" }
 smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop", "xkbcommon"] }
 zeroize = "=1.9.0"

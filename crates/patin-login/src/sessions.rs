@@ -47,7 +47,9 @@ fn collect_from(directory: &Path, sessions: &mut Vec<Session>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|extension| extension == "desktop")
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "desktop")
             && let Ok(text) = fs::read_to_string(&path)
             && let Some(session) = parse_desktop_entry(&text)
             && !sessions.iter().any(|known| known.name == session.name)

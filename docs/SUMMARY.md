@@ -30,3 +30,5 @@
 - [Stage 8e — Managed Settings and System OSK](stages/stage-8e-managed-settings-osk.md)
 - [Stage 8f — Shared Wi-Fi Icons and Saved Availability](stages/stage-8f-shared-wifi-icons.md)
 - [Stage 8g — Shared Status Icons and Explicit Audio Off State](stages/stage-8g-shared-status-icons.md)
+- [Stage 8h — Shared Status Strip on the Lock Screen](stages/stage-8h-shared-status-strip.md)
+- [Stage 8i — Lua Configuration](stages/stage-8i-lua-configuration.md)

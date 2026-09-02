@@ -8,9 +8,10 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
 use patin::render::{CpuRenderer, Scale};
+use patin_status::Status;
 use smithay_client_toolkit::{
-    compositor::FrameCallbackData,
     compositor::CompositorState,
+    compositor::FrameCallbackData,
     output::OutputState,
     reexports::{
         calloop::EventLoop,
@@ -34,12 +35,10 @@ use smithay_client_toolkit::{
 use crate::auth::{AuthResult, authenticate, effective_username};
 use crate::power::{OutputPowerData, OutputPowerManagerData};
 use crate::ui::{Key, LockUi};
-use crate::{
-    App, BYTES_PER_PIXEL, IDLE_BLANK_TIMEOUT, IDLE_BLANK_TIMEOUT_ENTERING,
-    POWER_BUTTON_PRESSED, View, handle_power_button_signal, keyboard_mode_from_args,
-};
+use crate::{App, BYTES_PER_PIXEL, POWER_BUTTON_PRESSED, View, handle_power_button_signal};
 
 pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
+    let settings = crate::settings::Settings::load();
     let username = effective_username()?;
     if !Path::new("/etc/pam.d/patin-lock").is_file() {
         return Err(
@@ -87,7 +86,13 @@ pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
         pointers: Vec::new(),
         touches: Vec::new(),
         renderer: CpuRenderer::new(),
-        ui: LockUi::new(keyboard_mode_from_args()),
+        ui: LockUi::new(settings.mode, settings.theme),
+        // Icons only: the lock already draws a large clock of its own. Built
+        // after the PAM policy check above, so a missing policy still fails
+        // fast rather than after a D-Bus connect.
+        status: Status::new(settings.theme.status_palette())
+            .with_clock(false)
+            .with_volume(true),
         username,
         auth_tx,
         auth_rx,
@@ -95,6 +100,8 @@ pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
         unlocked: false,
         output_power_manager,
         last_activity: Instant::now(),
+        blank_after: settings.blank_after,
+        blank_after_typing: settings.blank_after_typing,
         blanked: false,
         ever_woken: false,
     };
@@ -118,6 +125,13 @@ pub(crate) fn run_lock() -> Result<(), Box<dyn Error>> {
             app.set_blanked(!blanked);
         }
         app.check_idle();
+        // Only while awake. `draw_pending` already skips a blanked screen, but
+        // the poll behind it would still run — hitting D-Bus and spawning
+        // `wpctl` every couple of seconds at a display nobody can see. Waking
+        // redraws everything anyway, so nothing is missed.
+        if !app.blanked && app.status.update() {
+            app.redraw_all();
+        }
         app.draw_pending(&queue_handle);
     }
     if app.unlocked {
@@ -206,9 +220,9 @@ impl App {
             return;
         }
         let timeout = if self.ever_woken {
-            IDLE_BLANK_TIMEOUT_ENTERING
+            self.blank_after_typing
         } else {
-            IDLE_BLANK_TIMEOUT
+            self.blank_after
         };
         if self.last_activity.elapsed() >= timeout {
             self.set_blanked(true);
@@ -269,9 +283,12 @@ impl App {
         let physical_width = scale.physical(width);
         let physical_height = scale.physical(height);
         let stride = physical_width as i32 * BYTES_PER_PIXEL as i32;
-        let commands = self
+        // The strip draws over the lock's own background fill, so it has to
+        // come second.
+        let mut commands = self
             .ui
             .commands(width as f32, height as f32, &self.username);
+        commands.extend(self.status.commands(width as f32));
         let view = &mut self.views[index];
         let Ok((buffer, canvas)) = view.pool.create_buffer(
             physical_width as i32,

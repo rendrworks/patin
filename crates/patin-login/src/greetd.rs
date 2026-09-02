@@ -145,7 +145,8 @@ fn attempt(
                     session.request(&Request::CancelSession).ok();
                     return Err(auth_message.trim().to_string());
                 }
-                response = session.request(&Request::PostAuthMessageResponse { response: answer })?;
+                response =
+                    session.request(&Request::PostAuthMessageResponse { response: answer })?;
             }
         }
     }
@@ -182,9 +183,10 @@ impl Connection {
     }
 
     fn request(&mut self, request: &Request) -> Result<Response, String> {
-        let payload =
-            serde_json::to_vec(request).map_err(|error| format!("cannot encode request: {error}"))?;
-        let length = u32::try_from(payload.len()).map_err(|_| "request is too large".to_string())?;
+        let payload = serde_json::to_vec(request)
+            .map_err(|error| format!("cannot encode request: {error}"))?;
+        let length =
+            u32::try_from(payload.len()).map_err(|_| "request is too large".to_string())?;
         self.stream
             .write_all(&length.to_ne_bytes())
             .and_then(|()| self.stream.write_all(&payload))
@@ -211,7 +213,9 @@ mod tests {
     /// A stub greetd that replies with `script` in order, recording every
     /// request it received. Enough to drive the client through a full
     /// conversation without a real greetd or PAM.
-    fn stub_greetd(script: Vec<String>) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
+    fn stub_greetd(
+        script: Vec<String>,
+    ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
         let path = std::env::temp_dir().join(format!(
             "patin-login-test-{}-{:?}.sock",
             std::process::id(),
@@ -251,12 +255,7 @@ mod tests {
             r#"{"type":"success"}"#.into(),
         ]);
 
-        let result = attempt(
-            path.as_os_str(),
-            "sn3rt",
-            "hunter2",
-            &["0xin".to_string()],
-        );
+        let result = attempt(path.as_os_str(), "sn3rt", "hunter2", &["0xin".to_string()]);
         let requests = server.join().expect("stub greetd finishes");
         std::fs::remove_file(&path).ok();
 
@@ -287,7 +286,11 @@ mod tests {
 
         assert_eq!(result, Err("Authentication failed".into()));
         // Never starts a session, and cleans up so the next attempt can begin.
-        assert!(requests.iter().all(|request| !request.contains("start_session")));
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("start_session"))
+        );
         assert!(requests[2].contains(r#""type":"cancel_session""#));
     }
 
@@ -323,14 +326,18 @@ mod tests {
             env: Vec::new(),
         })
         .unwrap();
-        assert_eq!(started, r#"{"type":"start_session","cmd":["0xin"],"env":[]}"#);
+        assert_eq!(
+            started,
+            r#"{"type":"start_session","cmd":["0xin"],"env":[]}"#
+        );
     }
 
     #[test]
     fn responses_deserialize_from_greetds_tagged_shape() {
-        let message: Response =
-            serde_json::from_str(r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#)
-                .unwrap();
+        let message: Response = serde_json::from_str(
+            r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#,
+        )
+        .unwrap();
         assert!(matches!(
             message,
             Response::AuthMessage {

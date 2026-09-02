@@ -11,10 +11,12 @@ mod app;
 mod auth;
 mod input;
 mod power;
+mod settings;
 mod surface;
 mod ui;
 
 use patin::render::{CpuRenderer, Scale};
+use patin_status::Status;
 use smithay_client_toolkit::{
     compositor::CompositorState,
     output::OutputState,
@@ -43,13 +45,11 @@ use std::{
 };
 
 use auth::AuthResult;
-use ui::{KeyboardMode, LockUi};
+use ui::LockUi;
 
 use app::run_lock;
 
 const BYTES_PER_PIXEL: usize = 4;
-const IDLE_BLANK_TIMEOUT: Duration = Duration::from_secs(1);
-const IDLE_BLANK_TIMEOUT_ENTERING: Duration = Duration::from_secs(5);
 
 static POWER_BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
 
@@ -82,6 +82,9 @@ struct App {
     touches: Vec<(wl_seat::WlSeat, wl_touch::WlTouch)>,
     renderer: CpuRenderer,
     ui: LockUi,
+    /// The shared status strip, shown on every output. Icons only: the lock
+    /// draws its own large clock.
+    status: Status,
     username: String,
     auth_tx: Sender<AuthResult>,
     auth_rx: Receiver<AuthResult>,
@@ -91,6 +94,8 @@ struct App {
     last_activity: Instant,
     blanked: bool,
     ever_woken: bool,
+    blank_after: Duration,
+    blank_after_typing: Duration,
 }
 
 fn main() -> ExitCode {
@@ -149,21 +154,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err(error);
     }
     Ok(())
-}
-
-fn keyboard_mode_from_args() -> KeyboardMode {
-    let value = std::env::args()
-        .find_map(|argument| argument.strip_prefix("--keypad=").map(str::to_string))
-        .or_else(|| std::env::var("PATIN_LOCK_KEYPAD").ok());
-    match value {
-        Some(value) if value == "numeric" => KeyboardMode::Numeric,
-        Some(value) if value == "full" => KeyboardMode::Full,
-        Some(value) => {
-            eprintln!("patin-lock: unrecognized --keypad value {value:?}; using full keyboard");
-            KeyboardMode::Full
-        }
-        None => KeyboardMode::Full,
-    }
 }
 
 impl ProvidesRegistryState for App {

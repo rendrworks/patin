@@ -29,7 +29,8 @@ it is not intended to become a general-purpose application GUI framework.
 - Qt, QML, GTK, Electron, and other large GUI frameworks are out of scope.
 
 The toolkit uses `smithay-client-toolkit` 0.21.1 with Calloop, `tiny-skia`
-0.12.0, and `cosmic-text` 0.19.0. Chrono is used by the demo only.
+0.12.0, and `cosmic-text` 0.19.0. Chrono is used only by the compositions that
+show a clock, never by the core crate.
 
 ## Workspace
 
@@ -54,6 +55,10 @@ itself; `crates/` holds optional, opt-in support and composition crates:
   `patin-lock`, but an ordinary layer-shell client, since greetd owns the
   authentication.
 - `patin-session` — a compact, compositor-neutral session action menu.
+- `patin-status` — the shared top status strip: clock, battery, Wi-Fi, wired,
+  cellular, and volume, used by the greeter and the lock screen.
+- `patin-lua` — the opt-in Lua configuration layer. Compositions that want a
+  config file depend on it; the `patin` toolkit crate never does.
 
 A consumer depends on `patin` alone, or additionally on whichever adapter
 crates it wants; none are pulled in automatically.
@@ -220,6 +225,14 @@ password PAM checks:
 patin-lock --keypad=numeric
 ```
 
+A status strip runs along the top of every locked output, showing battery,
+Wi-Fi, cellular, and volume as the same `patin-icons` glyphs the bar and the
+greeter use. It carries no clock of its own — the lock already draws a large
+one — and each icon appears only when its provider has something to report, so
+an unreachable UPower or a disabled radio simply leaves a gap rather than a
+wrong value. The readings refresh every couple of seconds while the screen is
+awake and stop entirely once it blanks.
+
 Both keyboards use compact key groups with an adaptive lower-screen inset
 rather than stretching to fill an output or sitting against its bottom edge.
 The numeric keypad stays centered, while the full keyboard is width-limited on
@@ -265,6 +278,10 @@ policy and no elevated rights of its own.
 # Preview the UI inside your current session — no greetd required.
 patin-login
 ```
+
+The same status strip the lock screen uses runs along the top, with its clock
+on the left and the battery and radios on the right — a phone that quietly lost
+its SIM or its Wi-Fi is worth noticing before signing in rather than after.
 
 Without `$GREETD_SOCK` it starts in preview mode: the greeter renders and
 accepts input, but reports sign-in as unavailable instead of pretending to
@@ -331,6 +348,43 @@ ssh -t fp5 'env -u LD_LIBRARY_PATH \
   WAYLAND_DISPLAY=wayland-0 \
   /tmp/patin-fp5-test/target/release/examples/demo_bar'
 ```
+
+### Configuration
+
+Compositions that opt into `patin-lua` read `$XDG_CONFIG_HOME/patin/init.lua`,
+falling back to `~/.config/patin/init.lua`. The file is a list of statements
+rather than a table it hands back, so it can branch on the machine it is
+running on:
+
+```lua
+local patin = require("patin")
+
+patin.theme.accent = "#7c3aed"
+patin.bar.pill = { width = 32, height = 10, gap = 12, radius = 5 }
+patin.lock.keypad = "numeric"
+
+if patin.which("0xinctl") then
+  patin.actions["logout"] = { label = "Log out", run = { "0xinctl", "exit" } }
+end
+```
+
+Every setting is optional: what the file does not mention keeps Patin's
+built-in value. `patin.theme.*` colours every composition at once, and a
+composition's own key — `patin.lock.accent` — overrides the shared one for
+itself. Session menu rows are keyed, so naming one replaces it and
+`patin.actions["shutdown"] = false` removes one of Patin's own.
+
+`data/patin/init.lua.example` is a complete file to copy. Precedence is
+unchanged at the top and gains one rung:
+
+```text
+--flag=value  >  PATIN_* environment  >  init.lua  >  built-in default
+```
+
+`PATIN_NO_CONFIG=1` ignores the file, and `--config=path` names another one.
+A broken config is fatal and names the file and line — except in `patin-lock`
+and `patin-login`, which report it and continue with built-in defaults rather
+than leaving a machine that cannot be unlocked or signed into.
 
 ### Portability
 

@@ -10,6 +10,7 @@
 use patin::ui::{Color, DrawCommand, FontFamily, FontWeight, Rect, TextAlign};
 use zeroize::{Zeroize, Zeroizing};
 
+use patin_icons::IconPalette;
 use patin_keyboard::TouchKeyboard;
 pub use patin_keyboard::{Key, KeyboardMode};
 
@@ -30,6 +31,86 @@ pub(crate) const TEXT_MUTED: Color = Color(132, 152, 168, 255);
 const TEXT_PENDING: Color = Color(190, 206, 218, 255);
 pub(crate) const TEXT_ERROR: Color = Color(232, 150, 177, 255);
 
+/// The greeter's palette — deliberately a cooler sibling of the lock screen's
+/// purple, so the two are told apart at a glance. A config names one colour
+/// at a time; anything it leaves out stays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Theme {
+    pub background: Color,
+    pub field_fill: Color,
+    pub accent: Color,
+    pub accent_focused: Color,
+    pub bright: Color,
+    pub muted: Color,
+    pub pending: Color,
+    pub error: Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            background: BACKGROUND,
+            field_fill: FIELD_FILL,
+            accent: ACCENT,
+            accent_focused: ACCENT_FOCUSED,
+            bright: TEXT_BRIGHT,
+            muted: TEXT_MUTED,
+            pending: TEXT_PENDING,
+            error: TEXT_ERROR,
+        }
+    }
+}
+
+impl Theme {
+    pub fn from_config(config: &patin_lua::Config) -> Self {
+        let mut theme = Theme::default();
+        if let Some(color) = config.color(&["login.background", "theme.background"]) {
+            theme.background = color;
+        }
+        if let Some(color) = config.color(&["login.foreground", "theme.foreground"]) {
+            theme.bright = color;
+        }
+        if let Some(color) = config.color(&["login.muted", "theme.muted"]) {
+            theme.muted = color;
+        }
+        if let Some(color) = config.color(&["login.error", "theme.error"]) {
+            theme.error = color;
+        }
+        if let Some(color) = config.color(&["login.field_fill"]) {
+            theme.field_fill = color;
+        }
+        // One accent, two strengths: a focused field is the accent as given,
+        // an unfocused one the same hue at the resting weight this greeter
+        // has always used. Asking a config for both would be asking it to
+        // reproduce a relationship Patin already knows.
+        if let Some(color) = config.color(&["login.accent", "theme.accent"]) {
+            theme.accent_focused = color;
+            theme.accent = dim(color);
+        }
+        theme
+    }
+
+    /// The greeter's colours for the shared status strip. `background` has to
+    /// be the fill the strip is drawn over, because several glyphs punch
+    /// holes in it.
+    pub(crate) fn status_palette(&self) -> IconPalette {
+        IconPalette {
+            foreground: self.bright,
+            muted: self.muted,
+            background: self.background,
+            accent: self.accent_focused,
+            unavailable: self.error,
+        }
+    }
+}
+
+/// The resting weight of an accent: the ratio the greeter's own two accents
+/// have always stood in, so a config that names one gets the other for free.
+fn dim(color: Color) -> Color {
+    let scale = |channel: u8| ((channel as f32) * 0.55).round() as u8;
+    Color(scale(color.0), scale(color.1), scale(color.2), color.3)
+}
+
 /// Which field the keypad is typing into.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Field {
@@ -49,6 +130,10 @@ pub struct LoginUi {
     /// or the accidental taps.
     session: String,
     selectable: bool,
+    theme: Theme,
+    /// The line under the hostname. A greeter on a shared machine often wants
+    /// to say something other than "Sign in to continue".
+    greeting: Option<String>,
     keyboard: TouchKeyboard,
 }
 
@@ -59,6 +144,8 @@ impl LoginUi {
         hostname: String,
         session: String,
         selectable: bool,
+        theme: Theme,
+        greeting: Option<String>,
     ) -> Self {
         // A known user starts on the password field — the common case is
         // "this is my phone, let me in", not "pick an account".
@@ -76,6 +163,8 @@ impl LoginUi {
             hostname,
             session,
             selectable,
+            theme,
+            greeting,
             keyboard: TouchKeyboard::new(mode),
         }
     }
@@ -196,30 +285,31 @@ impl LoginUi {
         let content_x = username_bounds.origin.x;
         let content_width = username_bounds.size.width;
 
+        let theme = self.theme;
         let mut commands = vec![
-            fill(Rect::new(0.0, 0.0, width, height), BACKGROUND),
+            fill(Rect::new(0.0, 0.0, width, height), theme.background),
             text(
                 Rect::new(0.0, header_top, width, 40.0),
                 &self.hostname,
                 26.0,
-                TEXT_BRIGHT,
+                theme.bright,
             ),
             text(
                 Rect::new(0.0, header_top + 38.0, width, 28.0),
-                "Sign in to continue",
+                self.greeting.as_deref().unwrap_or("Sign in to continue"),
                 15.0,
-                TEXT_MUTED,
+                theme.muted,
             ),
         ];
 
         if self.selectable {
             let row = session_row(width, height);
-            commands.push(rounded_fill(row, FIELD_FILL, FIELD_RADIUS));
+            commands.push(rounded_fill(row, theme.field_fill, FIELD_RADIUS));
             commands.push(text(
                 row.inset(6.0),
                 &format!("Session: {}  ›", self.session),
                 15.0,
-                TEXT_MUTED,
+                theme.muted,
             ));
         }
         commands.extend(self.field(username_bounds, Field::Username));
@@ -234,9 +324,9 @@ impl LoginUi {
             &self.message,
             16.0,
             if self.verifying {
-                TEXT_PENDING
+                theme.pending
             } else {
-                TEXT_ERROR
+                theme.error
             },
         ));
         commands.extend(self.keyboard.commands(width, height, self.verifying));
@@ -256,15 +346,23 @@ impl LoginUi {
         vec![
             rounded_fill(
                 bounds,
-                if focused { ACCENT_FOCUSED } else { ACCENT },
+                if focused {
+                    self.theme.accent_focused
+                } else {
+                    self.theme.accent
+                },
                 FIELD_RADIUS,
             ),
-            rounded_fill(bounds.inset(1.5), FIELD_FILL, FIELD_RADIUS - 1.5),
+            rounded_fill(bounds.inset(1.5), self.theme.field_fill, FIELD_RADIUS - 1.5),
             text(
                 bounds.inset(8.0),
                 if filled { &value } else { label },
                 if filled { 24.0 } else { 17.0 },
-                if filled { TEXT_BRIGHT } else { TEXT_MUTED },
+                if filled {
+                    self.theme.bright
+                } else {
+                    self.theme.muted
+                },
             ),
         ]
     }
@@ -280,7 +378,7 @@ impl LoginUi {
 
 /// The hostname header, kept clear of the status strip on short screens.
 fn header_top(height: f32) -> f32 {
-    (height * 0.10).max(crate::status::STRIP_BOTTOM + 10.0)
+    (height * 0.10).max(patin_status::STRIP_BOTTOM + 10.0)
 }
 
 /// The session row, directly above the fields.
@@ -338,7 +436,7 @@ fn text(bounds: Rect, value: &str, font_size: f32, color: Color) -> DrawCommand 
 
 #[cfg(test)]
 mod tests {
-    use super::{Field, Key, KeyboardMode, LoginUi, MAX_PASSWORD_BYTES, fields};
+    use super::{Field, Key, KeyboardMode, LoginUi, MAX_PASSWORD_BYTES, Theme, fields};
     use patin::ui::DrawCommand;
 
     fn ui() -> LoginUi {
@@ -348,6 +446,8 @@ mod tests {
             "fp5".into(),
             "0xin Touch Test".into(),
             true,
+            Theme::default(),
+            None,
         )
     }
 
@@ -370,6 +470,8 @@ mod tests {
             "fp5".into(),
             "0xin Touch Test".into(),
             true,
+            Theme::default(),
+            None,
         );
         assert_eq!(empty.focus, Field::Username);
     }
@@ -408,7 +510,10 @@ mod tests {
         assert_eq!(password.as_str(), "s");
         assert!(ui.password.is_empty());
         assert!(ui.verifying);
-        assert!(ui.take_credentials().is_none(), "no resubmit while verifying");
+        assert!(
+            ui.take_credentials().is_none(),
+            "no resubmit while verifying"
+        );
     }
 
     #[test]
@@ -419,6 +524,8 @@ mod tests {
             "fp5".into(),
             "0xin Touch Test".into(),
             true,
+            Theme::default(),
+            None,
         );
         ui.press(Key::Character('s'));
         assert!(ui.take_credentials().is_none(), "username still empty");
@@ -487,16 +594,22 @@ mod tests {
             "fp5".into(),
             "Only".into(),
             false,
+            Theme::default(),
+            None,
         );
         assert!(!single.session_at(width, height, centre));
-        assert!(!text_values(&single).iter().any(|value| value.contains("Only")));
+        assert!(
+            !text_values(&single)
+                .iter()
+                .any(|value| value.contains("Only"))
+        );
     }
 
     #[test]
     fn the_header_never_collides_with_the_status_strip() {
         for height in [360.0, 780.0, 1000.0, 2340.0] {
             assert!(
-                super::header_top(height) >= crate::status::STRIP_BOTTOM,
+                super::header_top(height) >= patin_status::STRIP_BOTTOM,
                 "header overlaps the strip at height {height}"
             );
         }
@@ -520,18 +633,58 @@ mod tests {
             "h".into(),
             "s".into(),
             true,
+            Theme::default(),
+            None,
         )
+        .commands(500.0, 1000.0)
+        .into_iter()
+        .filter_map(|command| match command {
+            DrawCommand::RoundedFill { bounds, .. } => Some(bounds.origin.y),
+            _ => None,
+        })
+        .fold(f32::INFINITY, f32::min);
+        assert!(keypad_top > 0.0, "expected laid-out keys, got {keypad_top}");
+        assert!(message_bottom < 1000.0);
+    }
+
+    #[test]
+    fn an_empty_config_reproduces_the_greeter_this_crate_shipped_with() {
+        assert_eq!(
+            Theme::from_config(&patin_lua::Config::empty()),
+            Theme::default()
+        );
+    }
+
+    #[test]
+    fn one_accent_sets_both_the_focused_and_the_resting_weight() {
+        let config =
+            patin_lua::Config::from_source("init.lua", r##"patin.theme.accent = "#64c8c8""##)
+                .unwrap();
+        let theme = Theme::from_config(&config);
+        assert_eq!(theme.accent_focused, super::Color(0x64, 0xc8, 0xc8, 255));
+        assert_eq!(theme.accent, super::Color(55, 110, 110, 255));
+    }
+
+    #[test]
+    fn a_greeting_replaces_the_line_under_the_hostname() {
+        let ui = LoginUi::new(
+            KeyboardMode::Full,
+            "sn3rt".into(),
+            "fp5".into(),
+            "0xin".into(),
+            true,
+            Theme::default(),
+            Some("Shared terminal — sign in".into()),
+        );
+        let texts: Vec<String> = ui
             .commands(500.0, 1000.0)
             .into_iter()
             .filter_map(|command| match command {
-                DrawCommand::RoundedFill { bounds, .. } => Some(bounds.origin.y),
+                DrawCommand::Text { text, .. } => Some(text),
                 _ => None,
             })
-            .fold(f32::INFINITY, f32::min);
-        assert!(
-            keypad_top > 0.0,
-            "expected laid-out keys, got {keypad_top}"
-        );
-        assert!(message_bottom < 1000.0);
+            .collect();
+        assert!(texts.iter().any(|text| text == "Shared terminal — sign in"));
+        assert!(!texts.iter().any(|text| text == "Sign in to continue"));
     }
 }
