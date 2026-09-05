@@ -133,6 +133,56 @@ the user installer. The program checks that the policy exists before requesting
 the Wayland lock, avoiding a lock screen with no configured authentication
 route.
 
+## Nix and NixOS
+
+`flake.nix` builds the workspace reproducibly and `nix/module.nix` declares it
+on a NixOS machine. Neither is required to build Patin: the Cargo commands
+above are unaffected, `rust-toolchain.toml` is untouched, and nothing is
+vendored differently.
+
+The whole native dependency set is xkbcommon and PAM — the same two packages
+CI installs — which is why `buildInputs` names only `libxkbcommon` and `pam`.
+Every other library Patin might be expected to link against is a Rust crate
+instead: the Wayland protocol goes through `wayland-backend`'s Rust
+implementation rather than `libwayland-client`, font discovery through
+`fontconfig-parser` rather than `libfontconfig`, D-Bus through `zbus` rather
+than `libdbus`, and Lua through `luna`, a stackless Rust VM rather than the
+reference C interpreter. `pkg-config` is still a build input because SCTK's
+`xkbcommon` feature runs a build script that asks it for `xkbcommon.pc`.
+
+The flake reads its toolchain from `rust-toolchain.toml` through
+`rust-bin.fromRustupToolchainFile`, so the version lives in exactly one place
+and rustup, CI, and Nix cannot drift apart. It also builds the packages with
+that toolchain rather than whichever `rustc` nixpkgs ships, through
+`makeRustPlatform`.
+
+```sh
+nix develop
+nix build
+nix flake check
+```
+
+`luna` is the workspace's only git dependency, and a git dependency cannot be
+fetched from a plain `cargoHash`. `cargoLock.outputHashes."luna-0.5.1"` carries
+its hash; when the pinned revision in `crates/patin-lua/Cargo.toml` changes,
+the hash changes with it and the first build reports the new value.
+
+Patin cannot be linked statically the way a pure-userspace program can. PAM
+`dlopen`s its modules at runtime, so a statically linked `libpam` could not
+authenticate anyone. The package's install check therefore asserts that
+`patin-lock` *does* carry `libpam` and `libxkbcommon` as dynamic dependencies,
+which is what catches an accidentally emptied `buildInputs`.
+
+The NixOS module wires up only what a system has to own: the
+`/etc/pam.d/patin-lock` policy the locker refuses to start without, the greetd
+session that hosts the greeter, `PATIN_CONFIG`, and a `wayland-sessions` entry.
+The compositor is a package option with no default, because 0xin lives outside
+nixpkgs and Patin is designed to run under any compositor implementing the
+layer shell and session lock protocols. Commands Patin spawns by name — `nmcli`,
+`wpctl`, `pactl`, `systemctl`, `loginctl` — are deliberately left out of the
+closure; on NixOS they are in the system profile whenever the matching service
+is enabled, exactly as they are on other distributions.
+
 ## Remote Wayland session testing
 
 An SSH login normally does not inherit the graphical session environment.

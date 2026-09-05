@@ -104,6 +104,60 @@ has explicit off, low, medium, and high states. Zero volume and a muted sink
 draw a small neutral cross beside the speaker instead of looking like an empty
 low-volume meter. When the Wi-Fi radio is off, its bar icon and slot disappear.
 
+### Nix and NixOS
+
+`flake.nix` packages the workspace and exposes a NixOS module, without changing
+anything about the Cargo build above. The flake reads `rust-toolchain.toml`
+rather than pinning a second copy of the version, so `nix develop` gives the
+same Rust 1.97.1 that rustup and CI use.
+
+```sh
+nix develop                      # toolchain, xkbcommon, PAM, and mdBook
+nix build                        # the seven binaries
+nix run .#patin-lock             # one binary, by name
+nix build .#patin-demo-bar       # the demo bar, installed as `patin`
+nix flake check
+```
+
+Examples are never built by default; `patin-demo-bar` is the opt-in package
+that builds `examples/demo_bar` and installs it as `patin`, the way
+`scripts/install-demo-user.sh` does. To build only what a machine needs,
+narrow the crate list:
+
+```nix
+patin.packages.${system}.patin.override { crates = [ "patin-login" ]; }
+```
+
+On NixOS, add the flake as an input and enable the module. The compositor is a
+package you supply — 0xin is not in nixpkgs, and Patin is meant to run under
+any compositor with the layer shell and session lock protocols:
+
+```nix
+{
+  imports = [ patin.nixosModules.default ];
+
+  services.patin = {
+    enable = true;
+    compositor = pkgs.oxin;        # your own derivation
+    config = ./patin/init.lua;     # optional, exported as PATIN_CONFIG
+    lock.enable = true;            # installs /etc/pam.d/patin-lock
+    greeter.enable = true;         # patin-login as the greetd greeter
+    session.enable = true;         # a wayland-sessions entry
+  };
+}
+```
+
+There is no VT option: NixOS removed `services.greetd.vt` and fixes the greeter
+to VT1, unlike the `vt = 7` in `data/greetd/config.toml.example`.
+
+`lock.enable` is what makes the lock screen usable: `patin-lock` refuses to
+start unless `/etc/pam.d/patin-lock` exists, and the module generates the
+equivalent of `data/pam/patin-lock.arch`. The module does not pull `nmcli`,
+`wpctl`, `pactl`, `systemctl`, or `loginctl` into the closure; Patin spawns
+them by name, and on NixOS they appear in the system profile as soon as the
+matching service is enabled — the same expectation as on any other
+distribution.
+
 ### Install and run network settings
 
 NetworkManager remains the system daemon; Patin is its frontend. The separate

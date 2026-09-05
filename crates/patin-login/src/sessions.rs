@@ -6,13 +6,14 @@
 //! are read — the display name and the command — and entries that ask not to
 //! be shown are skipped.
 
+use std::env;
+use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const SESSION_DIRS: [&str; 2] = [
-    "/usr/local/share/wayland-sessions",
-    "/usr/share/wayland-sessions",
-];
+/// Where sessions live when `XDG_DATA_DIRS` is unset or names nothing else.
+/// The basedir specification gives exactly these two as the default.
+const DEFAULT_DATA_ROOTS: [&str; 2] = ["/usr/local/share", "/usr/share"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Session {
@@ -24,8 +25,8 @@ pub struct Session {
 /// with an empty list could never log anyone in.
 pub fn discover(fallback: &[String]) -> Vec<Session> {
     let mut sessions = Vec::new();
-    for directory in SESSION_DIRS {
-        collect_from(Path::new(directory), &mut sessions);
+    for directory in session_dirs(env::var_os("XDG_DATA_DIRS")) {
+        collect_from(&directory, &mut sessions);
     }
     sessions.sort_by(|left, right| left.name.cmp(&right.name));
     if sessions.is_empty() && !fallback.is_empty() {
@@ -39,6 +40,35 @@ pub fn discover(fallback: &[String]) -> Vec<Session> {
         });
     }
     sessions
+}
+
+/// The `wayland-sessions` directory under every data root, most specific
+/// first. `XDG_DATA_DIRS` is what makes the greeter work on a distribution
+/// that installs sessions outside `/usr` — NixOS puts them in
+/// `/run/current-system/sw/share` — and the two defaults stay appended so a
+/// system that never sets the variable behaves as it always did.
+///
+/// Takes the variable rather than reading it so the walk stays testable
+/// without a process-wide environment change; `patin-launcher` builds its
+/// icon search path the same way in `apps.rs`.
+fn session_dirs(data_dirs: Option<OsString>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = data_dirs
+        .map(|value| {
+            env::split_paths(&value)
+                .filter(|root| !root.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    for default in DEFAULT_DATA_ROOTS {
+        let root = PathBuf::from(default);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join("wayland-sessions"))
+        .collect()
 }
 
 fn collect_from(directory: &Path, sessions: &mut Vec<Session>) {
@@ -107,7 +137,8 @@ fn strip_field_codes(exec: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Session, parse_desktop_entry, strip_field_codes};
+    use super::{Session, parse_desktop_entry, session_dirs, strip_field_codes};
+    use std::path::PathBuf;
 
     #[test]
     fn reads_the_name_and_command() {
@@ -161,6 +192,29 @@ Exec=phosh-session --debug
         assert_eq!(
             strip_field_codes("gnome-session --session=phrog %U"),
             vec!["gnome-session".to_string(), "--session=phrog".to_string()]
+        );
+    }
+
+    #[test]
+    fn data_dirs_are_searched_before_the_defaults() {
+        assert_eq!(
+            session_dirs(Some("/run/current-system/sw/share:/usr/share".into())),
+            vec![
+                PathBuf::from("/run/current-system/sw/share/wayland-sessions"),
+                PathBuf::from("/usr/share/wayland-sessions"),
+                PathBuf::from("/usr/local/share/wayland-sessions"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_usr_defaults_survive_an_unset_variable() {
+        assert_eq!(
+            session_dirs(None),
+            vec![
+                PathBuf::from("/usr/local/share/wayland-sessions"),
+                PathBuf::from("/usr/share/wayland-sessions"),
+            ]
         );
     }
 }
