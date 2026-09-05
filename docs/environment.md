@@ -162,6 +162,15 @@ nix build
 nix flake check
 ```
 
+`.envrc` makes that shell automatic under direnv, through direnv's builtin
+`use flake` rather than nix-direnv. It watches `flake.nix` and `flake.lock`,
+and the `.direnv/` profile it keeps is registered as a garbage-collection root,
+so an active checkout survives `nix store gc`. It is entirely optional.
+
+One deliberate looseness: the shell's mdBook is whatever nixpkgs ships, while
+CI pins `mdbook 0.5.3`. The book is plain Markdown and builds under both, so
+the version is not worth a second pin the way the Rust toolchain is.
+
 `luna` is the workspace's only git dependency, and a git dependency cannot be
 fetched from a plain `cargoHash`. `cargoLock.outputHashes."luna-0.5.1"` carries
 its hash; when the pinned revision in `crates/patin-lua/Cargo.toml` changes,

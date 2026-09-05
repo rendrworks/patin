@@ -119,6 +119,13 @@ nix build .#patin-demo-bar       # the demo bar, installed as `patin`
 nix flake check
 ```
 
+`.envrc` enters that shell automatically under [direnv](https://direnv.net)
+(`direnv allow` once). It uses direnv's own builtin `use flake`, so nix-direnv
+is not needed, and it keeps the shell in a `.direnv/` profile that is also a
+garbage-collection root — `nix store gc` will not delete the toolchain out from
+under the checkout. Nothing requires direnv: `nix develop` is the same shell,
+and a rustup checkout needs neither.
+
 Examples are never built by default; `patin-demo-bar` is the opt-in package
 that builds `examples/demo_bar` and installs it as `patin`, the way
 `scripts/install-demo-user.sh` does. To build only what a machine needs,

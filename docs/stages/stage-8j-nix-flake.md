@@ -180,7 +180,10 @@ would also break `patin-lock`, which re-execs `current_exe()` with `--worker`.
   with a `session_dirs` function reading `XDG_DATA_DIRS`, plus two tests.
 - `README.md` and `docs/environment.md` document the Nix path beside the
   existing per-distribution instructions.
-- `.gitignore` ignores the `result` symlinks a Nix build leaves behind.
+- `.envrc` enters the development shell under direnv, using direnv's builtin
+  `use flake`; no nix-direnv, and no requirement to use it at all.
+- `.gitignore` ignores the `result` symlinks a Nix build leaves behind, and
+  `.direnv/`.
 - `flake.lock` is committed.
 
 No Wayland protocol handling, rendering, or runtime capability detection
@@ -217,6 +220,9 @@ Then the Nix path, on x86_64 Arch Linux with Nix 2.35.2:
   same shell reported `rustc 1.97.1`, matching `rust-toolchain.toml`.
 - Evaluating `patin.override { crates = [ "patin-login" ]; }` produced
   `cargoBuildFlags = [ "-p" "patin-login" ]`, confirming the narrowed build.
+- `direnv allow` followed by `direnv exec . cargo --version` reported
+  `cargo 1.97.1`, and `/nix/var/nix/gcroots/auto/` gained a link to the
+  checkout's `.direnv/flake-profile-1-link`.
 
 The NixOS module was evaluated against a throwaway configuration with
 `eval-config.nix`, which produced the expected `/etc/pam.d/patin-lock` stack
